@@ -1,5 +1,5 @@
 using System.ComponentModel.DataAnnotations;
-namespace PaymentService.Models;
+namespace PaymentFunds.Models;
 
 public class PaymentRequest
 {
@@ -13,6 +13,6 @@ public class PaymentRequest
     public string? ApprovedBy { get; set; }
     public string? StripePaymentIntentId { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
-    public DateTime? ApprovedAt { get; set; }
+    public DateTime? ProcessedAt { get; set; }
     public DateTime? ApprovedAt { get; set; }
 }
