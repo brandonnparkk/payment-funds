@@ -1,0 +1,21 @@
+@model PaymentFunds.Models.CreatePaymentRequestViewModel
+
+<h1>New Payment Request</h1>
+
+<form asp-action="Create" method="post">
+    <div class="mb-3">
+        <label asp-for="Amount" class="form-label"></label>
+        <input asp-for="Amount" class="form-control" />
+        <span asp-validation-for="Amount" class="text-danger"></span>
+    </div>
+    <div class="mb-3">
+        <label asp-for="Currency" class="form-label"></label>
+        <input asp-for="Currency" class="form-control" />
+    </div>
+    <div class="mb-3">
+        <label asp-for="RequestedBy" class="form-label"></label>
+        <input asp-for="RequestedBy" class="form-control" />
+        <span asp-validation-for="RequestedBy" class="text-danger"></span>
+    </div>
+    <button type="submit" class="btn btn-primary">Submit</button>
+</form>
