@@ -1,0 +1,22 @@
+@model PaymentFunds.Models.PaymentRequest
+
+<h1>Payment Request #@Model.Id</h1>
+
+<dl class="row">
+    <dt class="col-sm-3">Amount</dt><dd class="col-sm-9">@Model.Amount @Model.Currency</dd>
+    <dt class="col-sm-3">Requested By</dt><dd class="col-sm-9">@Model.RequestedBy</dd>
+    <dt class="col-sm-3">Status</dt><dd class="col-sm-9">@Model.Status</dd>
+    <dt class="col-sm-3">Created</dt><dd class="col-sm-9">@Model.CreatedAt</dd>
+</dl>
+
+@if (Model.Status == PaymentFunds.Models.PaymentStatus.PendingApproval)
+{
+    <form asp-action="Approve" asp-route-id="@Model.Id" method="post" class="d-inline">
+        <input type="text" name="approvedBy" placeholder="Your name" required />
+        <button type="submit" class="btn btn-success">Approve</button>
+    </form>
+    <form asp-action="Reject" asp-route-id="@Model.Id" method="post" class="d-inline">
+        <input type="text" name="rejectedBy" placeholder="Your name" required />
+        <button type="submit" class="btn btn-danger">Reject</button>
+    </form>
+}
