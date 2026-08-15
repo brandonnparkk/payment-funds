@@ -1,0 +1,25 @@
+@model IEnumerable<PaymentFunds.Models.PaymentRequest>
+
+<h1>Payment Requests</h1>
+<a asp-action="Create" class="btn btn-primary mb-3">New Request</a>
+
+<table class="table">
+    <thead>
+        <tr>
+            <th>Id</th><th>Amount</th><th>Currency</th><th>Requested By</th><th>Status</th><th></th>
+        </tr>
+    </thead>
+    <tbody>
+    @foreach (var r in Model)
+    {
+        <tr>
+            <td>@r.Id</td>
+            <td>@r.Amount</td>
+            <td>@r.Currency</td>
+            <td>@r.RequestedBy</td>
+            <td>@r.Status</td>
+            <td><a asp-action="Details" asp-route-id="@r.Id">View</a></td>
+        </tr>
+    }
+    </tbody>
+</table>
