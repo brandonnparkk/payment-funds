@@ -81,7 +81,7 @@ public class PaymentRequestsController : Controller
 
     [HttpPost]
     [ValidateAntiForgeryToken]
-    public async Task<IActionResult> Reject(int id)
+    public async Task<IActionResult> Reject(int id, string rejectedBy)
     {
         var request = await _context.PaymentRequests.FindAsync(id);
         if (request == null) return NotFound();
@@ -91,6 +91,8 @@ public class PaymentRequestsController : Controller
         }
 
         request.Status = PaymentStatus.Rejected;
+        request.RejectedBy = rejectedBy;
+        request.RejectedAt = DateTime.UtcNow;
         await _context.SaveChangesAsync();
 
         return RedirectToAction(nameof(Details), new { id });
