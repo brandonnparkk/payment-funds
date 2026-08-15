@@ -8,3 +8,6 @@ obj/
 .vscode/
 
 appsettings.Development.json
+appsetings.json
+
+ROADMAP.md
