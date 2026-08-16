@@ -13,5 +13,7 @@ public class CreatePaymentRequestViewModel
     
     [Required]
     public string RequestedBy { get; set; } = string.Empty;
-
+    
+    [Required]
+    public string IdempotencyKey { get; set; } = string.Empty;
 }
