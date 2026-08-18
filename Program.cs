@@ -1,10 +1,14 @@
 using Microsoft.EntityFrameworkCore;
 using PaymentFunds.Data;
-
+using PaymentFunds.Workers;
+using Stripe;
 var builder = WebApplication.CreateBuilder(args);
+
+StripeConfiguration.ApiKey = builder.Configuration["Stripe:SecretKey"];
 
 // Add services to the container.
 builder.Services.AddControllersWithViews();
+builder.Services.AddHostedService<PaymentProcessingWorker>();
 builder.Services.AddDbContext<ApplicationDbContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
 
