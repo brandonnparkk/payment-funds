@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using PaymentFunds.Models;
 using PaymentFunds.Data;
+using Npgsql;
 
 namespace PaymentFunds.Controllers;
 
@@ -25,7 +26,10 @@ public class PaymentRequestsController : Controller
 
     public IActionResult Create()
     {
-        return View();
+        return View(new CreatePaymentRequestViewModel
+        {
+            IdempotencyKey = Guid.NewGuid().ToString()
+        });
     }
 
     [HttpPost]
@@ -37,9 +41,17 @@ public class PaymentRequestsController : Controller
             return View(model);
         }
 
+        var existing = await _context.PaymentRequests.
+            FirstOrDefaultAsync(r => r.IdempotencyKey == model.IdempotencyKey);
+
+        if (existing != null)
+        {
+            return RedirectToAction(nameof(Details), new { id = existing.Id });
+        }
+
         var paymentRequest = new PaymentRequest
         {
-            IdempotencyKey = Guid.NewGuid().ToString(),
+            IdempotencyKey = model.IdempotencyKey,
             Amount = model.Amount,
             Currency = model.Currency,
             RequestedBy = model.RequestedBy,
@@ -48,7 +60,15 @@ public class PaymentRequestsController : Controller
         };
 
         _context.PaymentRequests.Add(paymentRequest);
-        await _context.SaveChangesAsync();
+
+        try {
+            await _context.SaveChangesAsync();
+        } catch (DbUpdateException ex) when (ex.InnerException is PostgresException { SqlState: "23505" })
+        {
+            var winner = await _context.PaymentRequests.
+                FirstAsync(r => r.IdempotencyKey == model.IdempotencyKey);
+            return RedirectToAction(nameof(Details), new { id = winner.Id });
+        }
 
         return RedirectToAction(nameof(Index));
     }
