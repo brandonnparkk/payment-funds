@@ -15,5 +15,11 @@ public class ApplicationDbContext : DbContext
         modelBuilder.Entity<PaymentRequest>()
             .HasIndex(p => p.IdempotencyKey)
             .IsUnique();
+        
+        modelBuilder.Entity<ProcessedStripeEvent>()
+            .HasIndex(e => e.EventId)
+            .IsUnique();
     }
+
+    public DbSet<ProcessedStripeEvent> ProcessedStripeEvents => Set<ProcessedStripeEvent>();
 }

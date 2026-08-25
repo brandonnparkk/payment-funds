@@ -25,7 +25,7 @@ public class PaymentProcessingWorker : BackgroundService
             {
                 try {
                     await ProcessApprovedRequestsAsync(stoppingToken);
-                } catch (ex) {
+                } catch (Exception ex) {
                     _logger.LogError(ex, "Unhandled error in payment processing loop");
                 }
                 await Task.Delay(PollInterval, stoppingToken);
@@ -74,6 +74,8 @@ public class PaymentProcessingWorker : BackgroundService
                         Amount = (long)(request.Amount * 100),
                         Currency = request.Currency.ToLowerInvariant(),
                         PaymentMethodTypes = new List<string> { "card" },
+                        PaymentMethod = "pm_card_visa",
+                        Confirm = true,
                         Description = $"Payment for request {request.Id}",
                     },
                     new RequestOptions {
