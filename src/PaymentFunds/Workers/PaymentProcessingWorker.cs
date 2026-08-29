@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using PaymentFunds.Data;
 using PaymentFunds.Models;
+using PaymentFunds.Payments;
 using Stripe;
 
 namespace PaymentFunds.Workers;
@@ -9,13 +10,16 @@ public class PaymentProcessingWorker : BackgroundService
 {
     private readonly IServiceProvider _services;
     private readonly ILogger<PaymentProcessingWorker> _logger;
+    private readonly IPaymentProcessor _paymentProcessor;
     private static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(5);
 
     public PaymentProcessingWorker(
         IServiceProvider services,
+        IPaymentProcessor paymentProcessor,
         ILogger<PaymentProcessingWorker> logger)
         {
             _services = services;
+            _paymentProcessor = paymentProcessor;
             _logger = logger;
         }
 
@@ -67,32 +71,36 @@ public class PaymentProcessingWorker : BackgroundService
             var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
 
             var request = await db.PaymentRequests.AsTracking().FirstAsync(pr => pr.Id == id, ct);
-            try {
-                var intents = new PaymentIntentService();
-                var intent = await intents.CreateAsync(
-                    new PaymentIntentCreateOptions {
-                        Amount = (long)(request.Amount * 100),
-                        Currency = request.Currency.ToLowerInvariant(),
-                        PaymentMethodTypes = new List<string> { "card" },
-                        PaymentMethod = "pm_card_visa",
-                        Confirm = true,
-                        Description = $"Payment for request {request.Id}",
-                    },
-                    new RequestOptions {
-                        IdempotencyKey = request.IdempotencyKey,
-                    }, ct);
-                
-                request.StripePaymentIntentId = intent.Id;
+            var result = await _paymentProcessor.CreatePaymentAsync(
+                new PaymentInstruction(
+                    request.Amount,
+                    request.Currency,
+                    request.IdempotencyKey,
+                    $"Payment for request {request.Id}"
+                ),
+                ct
+                );
+            
+            if (result.Success)
+            {
+                request.StripePaymentIntentId = result.ProviderReference;
                 request.ProcessedAt = DateTime.UtcNow;
-                await db.SaveChangesAsync(ct);
 
-                _logger.LogInformation("Created Payment Intent {IntentId} for request {RequestId}", intent.Id, request.Id);
-                
-            } catch (StripeException ex) {
-                _logger.LogError(ex, "Stripe call failed for request {RequestId}", request.Id);
-                request.Status = PaymentStatus.Failed;
-                await db.SaveChangesAsync(ct);
+                _logger.LogInformation(
+                    "Created payment {Reference} for request {RequestId}",
+                    result.ProviderReference,
+                    request.Id);
             }
+            else
+            {
+                request.Status = PaymentStatus.Failed;
+                _logger.LogError(
+                    "Payment failed for request {RequestId}: {Reason}",
+                    request.Id,
+                    result.FailureReason);
+            }
+
+            await db.SaveChangesAsync(ct);
         }
     
 }

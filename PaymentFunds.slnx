@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="src/PaymentFunds/PaymentFunds.csproj" />
+  <Project Path="tests/PaymentFunds.Tests/PaymentFunds.Tests.csproj" />
+</Solution>
