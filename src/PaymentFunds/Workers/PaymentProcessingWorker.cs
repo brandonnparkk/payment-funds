@@ -2,7 +2,6 @@ using Microsoft.EntityFrameworkCore;
 using PaymentFunds.Data;
 using PaymentFunds.Models;
 using PaymentFunds.Payments;
-using Stripe;
 
 namespace PaymentFunds.Workers;
 
