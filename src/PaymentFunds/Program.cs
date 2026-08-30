@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using PaymentFunds.Data;
 using PaymentFunds.Workers;
+using PaymentFunds.Payments;
 using Stripe;
 var builder = WebApplication.CreateBuilder(args);
 
@@ -11,6 +12,7 @@ builder.Services.AddControllersWithViews();
 builder.Services.AddHostedService<PaymentProcessingWorker>();
 builder.Services.AddDbContext<ApplicationDbContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
+builder.Services.AddSingleton<IPaymentProcessor, StripePaymentProcessor>();
 
 var app = builder.Build();
 
