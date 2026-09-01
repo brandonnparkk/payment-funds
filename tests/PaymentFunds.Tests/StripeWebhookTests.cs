@@ -2,6 +2,7 @@ using System.Net;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using NUnit.Framework;
@@ -112,4 +113,39 @@ public class StripeWebhookTests : IntegrationTestBase
         });
         await db.SaveChangesAsync();
     }
+
+    private static string Extract(string html, string name)
+{
+    var match = Regex.Match(html,
+        $"""name="{name}"[^>]*value="([^"]+)""");
+    return match.Groups[1].Value;
+}
+
+[Test]
+public async Task Submitting_the_same_form_twice_creates_one_request()
+{
+    var html = await Client.GetStringAsync("/PaymentRequests/Create");
+
+    var form = new Dictionary<string, string>
+    {
+        ["__RequestVerificationToken"] = Extract(html, "__RequestVerificationToken"),
+        ["IdempotencyKey"] = Extract(html, "IdempotencyKey"),
+        ["Amount"] = "19.99",
+        ["Currency"] = "usd",
+        ["RequestedBy"] = "brandon"
+    };
+
+    var first = await Client.PostAsync("/PaymentRequests/Create", new FormUrlEncodedContent(form));
+    var second = await Client.PostAsync("/PaymentRequests/Create", new FormUrlEncodedContent(form));
+
+    Assert.Multiple(() =>
+    {
+        Assert.That((int)first.StatusCode, Is.LessThan(400));
+        Assert.That((int)second.StatusCode, Is.LessThan(400));
+    });
+
+    using var scope = Factory.Services.CreateScope();
+    var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+    Assert.That(await db.PaymentRequests.CountAsync(), Is.EqualTo(1));
+}
 }
