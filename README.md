@@ -27,7 +27,7 @@ Built to work through the patterns real payment systems depend on: explicit stat
 
 A payment request moves through an explicit state machine. Nothing skips a step, and every transition is guarded server-side.
 
-![How PaymentFunds works](PaymentFunds-how-it-works.svg)
+![How PaymentFunds works](src/PaymentFunds/PaymentFunds-how-it-works.svg)
 
 1. **Submit.** A user fills in amount, currency, and requester. The server mints an idempotency key when it renders the form, so resubmitting the same form cannot create a duplicate.
 2. **Approve.** An approver approves or rejects. Both actions are recorded with a name and timestamp. Only `PendingApproval` requests can be acted on.
@@ -54,7 +54,7 @@ The web request never waits on Stripe. Approval returns immediately and the paym
 
 ## Architecture
 
-![Architecture](paymentfunds-architecture.svg)
+![Architecture](src/PaymentFunds/paymentfunds-architecture.svg)
 
 The web layer and the worker run in the same process but are fully decoupled. They communicate only through the database.
 
