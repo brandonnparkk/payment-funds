@@ -15,6 +15,7 @@ Built to work through the patterns real payment systems depend on: explicit stat
 - [Architecture](#architecture)
 - [Key design decisions](#key-design-decisions)
 - [Getting started](#getting-started)
+- [Running the tests](#running-the-tests)
 - [Project structure](#project-structure)
 - [Data model](#data-model)
 - [Testing the flow](#testing-the-flow)
@@ -110,6 +111,13 @@ The handler reads `Request.Body` as a stream rather than binding to a model. Str
 - [minikube](https://minikube.sigs.k8s.io/docs/start) and `kubectl`
 - [Stripe CLI](https://docs.stripe.com/cli)
 - A Stripe account (test mode)
+- Nothing else listening on port 5432
+
+All `dotnet` commands are run from the repository root and target the app with
+`--project src/PaymentFunds`.
+
+You will want four terminals: one for the port-forward, one for `stripe listen`,
+one for the app, and one to work in.
 
 ### 1. Start PostgreSQL in the cluster
 
@@ -119,7 +127,8 @@ kubectl apply -f k8s/
 kubectl get pods -w        # wait for 1/1 Running
 ```
 
-Forward the database port so the app can reach it from your host. Leave this running.
+Forward the database port so the app can reach it from your host. Leave this running
+in its own terminal; it does not survive a cluster restart.
 
 ```bash
 kubectl port-forward svc/postgres 5432:5432
@@ -128,15 +137,32 @@ kubectl port-forward svc/postgres 5432:5432
 ### 2. Configure secrets
 
 ```bash
-dotnet user-secrets set "Stripe:SecretKey" "sk_test_..."
+dotnet user-secrets set "Stripe:SecretKey" "sk_test_..." --project src/PaymentFunds
+dotnet user-secrets set "SeedUsers:RequesterPassword" "<a password>" --project src/PaymentFunds
+dotnet user-secrets set "SeedUsers:ApproverPassword" "<a password>" --project src/PaymentFunds
 ```
 
-The database connection string lives in `appsettings.Development.json` and defaults to the credentials in `k8s/postgres-secret.yaml`.
+The seed passwords are read from configuration rather than hardcoded, so no default
+credentials live in source control. Without them the seeder logs a warning and skips
+user creation.
+
+The database connection string lives in `src/PaymentFunds/appsettings.Development.json`
+and matches the credentials in `k8s/postgres-secret.yaml`, which is encrypted with sops.
 
 ### 3. Apply migrations
 
 ```bash
-ASPNETCORE_ENVIRONMENT=Development dotnet ef database update
+ASPNETCORE_ENVIRONMENT=Development dotnet ef database update --project src/PaymentFunds
+```
+
+The PersistentVolumeClaim survives `minikube stop`, so on a normal restart the schema
+is already there and this is a no-op. After a `minikube delete` the volume is gone and
+this recreates everything.
+
+Check what you have with:
+
+```bash
+psql -h localhost -p 5432 -U brandon -d PaymentFunds -c '\dt'
 ```
 
 ### 4. Start the webhook listener
@@ -147,21 +173,71 @@ In a separate terminal:
 stripe listen --forward-to localhost:5245/api/stripe/webhook
 ```
 
-Copy the `whsec_` secret it prints:
+Copy the `whsec_` secret it prints and compare it with what is already stored:
 
 ```bash
-dotnet user-secrets set "Stripe:WebhookSecret" "whsec_..."
+dotnet user-secrets list --project src/PaymentFunds
+dotnet user-secrets set "Stripe:WebhookSecret" "whsec_..." --project src/PaymentFunds
 ```
 
-> Restart the app after changing user secrets. Configuration binds at startup.
+> Restart the app after changing user secrets. Configuration binds at startup, so a
+> running app keeps the old value. A stale signing secret shows up as a 400 on every
+> forwarded event.
 
 ### 5. Run
 
 ```bash
-dotnet run
+dotnet run --project src/PaymentFunds
 ```
 
 Open <http://localhost:5245/PaymentRequests>.
+
+Sign in at <http://localhost:5245/Account/Login> with `approver@paymentfunds.local`
+or `requester@paymentfunds.local` and the seed passwords from step 2.
+
+### 6. Verify end to end
+
+Create a request, approve it, then watch for:
+
+- `Created payment pi_...` in the `dotnet run` console
+- `payment_intent.succeeded` forwarded with a `[200]` in the `stripe listen` console
+- the request reaching `Completed` on its details page
+
+---
+
+## Running the tests
+
+The integration tests hit a real PostgreSQL database rather than the EF InMemory
+provider, because the behaviour under test is database behaviour. InMemory does not
+enforce unique indexes, so the idempotency tests would pass against a broken app.
+
+One-time setup, with the port-forward running:
+
+```bash
+psql -h localhost -p 5432 -U brandon -d PaymentFunds -c 'CREATE DATABASE paymentfunds_test'
+```
+
+Then, from the repository root:
+
+```bash
+dotnet test
+```
+
+Migrations are applied to the test database on first run, and the tables are
+truncated between tests.
+
+`PaymentFundsFactory` boots the real application with three substitutions: the
+connection string points at `paymentfunds_test`, a known webhook signing secret is
+injected, and `IPaymentProcessor` is replaced with a fake so no call reaches Stripe.
+The background worker is removed with `RemoveAll<IHostedService>()` so it cannot
+mutate rows underneath assertions.
+
+Webhook signatures are constructed in the tests using Stripe's own scheme, HMAC-SHA256
+over `timestamp.payload`. That replaces manual replay with the Stripe CLI, which is
+bounded by a five-minute signature tolerance and sensitive to any reformatting of the
+payload bytes.
+
+> The port-forward must be running or every integration test fails on connection.
 
 ---
 
