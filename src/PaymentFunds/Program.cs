@@ -32,7 +32,8 @@ builder.Services.ConfigureApplicationCookie(options =>
 
 var app = builder.Build();
 
-if (app.Environment.IsDevelopment())
+if (app.Environment.IsDevelopment()
+    && app.Configuration.GetValue("SeedIdentity", true))
 {
     await IdentitySeeder.SeedAsync(app.Services);
 }
