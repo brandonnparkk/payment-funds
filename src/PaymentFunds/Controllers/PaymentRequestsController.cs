@@ -3,9 +3,11 @@ using Microsoft.EntityFrameworkCore;
 using PaymentFunds.Models;
 using PaymentFunds.Data;
 using Npgsql;
+using Microsoft.AspNetCore.Authorization;
 
 namespace PaymentFunds.Controllers;
 
+[Authorize]
 public class PaymentRequestsController : Controller
 {
     private readonly ApplicationDbContext _context;
@@ -54,7 +56,7 @@ public class PaymentRequestsController : Controller
             IdempotencyKey = model.IdempotencyKey,
             Amount = model.Amount,
             Currency = model.Currency,
-            RequestedBy = model.RequestedBy,
+            RequestedBy = User.Identity!.Name!,
             Status = PaymentStatus.PendingApproval,
             CreatedAt = DateTime.UtcNow
         };
@@ -82,7 +84,8 @@ public class PaymentRequestsController : Controller
 
     [HttpPost]
     [ValidateAntiForgeryToken]
-    public async Task<IActionResult> Approve(int id, string approvedBy)
+    [Authorize(Roles = "Approver")]
+    public async Task<IActionResult> Approve(int id)
     {
         var request = await _context.PaymentRequests.FindAsync(id);
         if (request == null) return NotFound();
@@ -90,9 +93,13 @@ public class PaymentRequestsController : Controller
         {
             return BadRequest("Only pending requests can be approved");
         }
+        if (request.RequestedBy == User.Identity!.Name)
+        {
+            return Forbid();
+        }
 
         request.Status = PaymentStatus.Approved;
-        request.ApprovedBy = approvedBy;
+        request.ApprovedBy = User.Identity!.Name;
         request.ApprovedAt = DateTime.UtcNow;
         await _context.SaveChangesAsync();
 
@@ -101,7 +108,8 @@ public class PaymentRequestsController : Controller
 
     [HttpPost]
     [ValidateAntiForgeryToken]
-    public async Task<IActionResult> Reject(int id, string rejectedBy)
+    [Authorize(Roles = "Approver")]
+    public async Task<IActionResult> Reject(int id)
     {
         var request = await _context.PaymentRequests.FindAsync(id);
         if (request == null) return NotFound();
@@ -111,7 +119,7 @@ public class PaymentRequestsController : Controller
         }
 
         request.Status = PaymentStatus.Rejected;
-        request.RejectedBy = rejectedBy;
+        request.RejectedBy = User.Identity!.Name;
         request.RejectedAt = DateTime.UtcNow;
         await _context.SaveChangesAsync();
 

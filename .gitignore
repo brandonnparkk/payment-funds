@@ -7,7 +7,14 @@ obj/
 .vs/
 .vscode/
 
+# Local configuration and credentials.
+# Use appsettings.Development.example.json as the template.
 appsettings.Development.json
 appsettings.json
 
+# Decrypted sops output, should never be committed.
+*.dec.yaml
+*.decrypted.yaml
+
+# Personal planning notes, intentionally not published.
 ROADMAP.md

@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using PaymentFunds.Data;
@@ -8,6 +9,7 @@ namespace PaymentFunds.Controllers;
 
 [ApiController]
 [Route("api/stripe/webhook")]
+[AllowAnonymous]
 public class StripeWebhookController : ControllerBase
 {
     private readonly ApplicationDbContext _context;

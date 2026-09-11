@@ -7,16 +7,16 @@
     <dt class="col-sm-3">Requested By</dt><dd class="col-sm-9">@Model.RequestedBy</dd>
     <dt class="col-sm-3">Status</dt><dd class="col-sm-9">@Model.Status</dd>
     <dt class="col-sm-3">Created</dt><dd class="col-sm-9">@Model.CreatedAt</dd>
+    <dt class="col-sm-3">Approved By</dt><dd class="col-sm-9">@(Model.ApprovedBy ?? "-")</dd>
+    <dt class="col-sm-3">Rejected By</dt><dd class="col-sm-9">@(Model.RejectedBy ?? "-")</dd>
 </dl>
 
 @if (Model.Status == PaymentFunds.Models.PaymentStatus.PendingApproval)
 {
     <form asp-action="Approve" asp-route-id="@Model.Id" method="post" class="d-inline">
-        <input type="text" name="approvedBy" placeholder="Your name" required />
         <button type="submit" class="btn btn-success">Approve</button>
     </form>
     <form asp-action="Reject" asp-route-id="@Model.Id" method="post" class="d-inline">
-        <input type="text" name="rejectedBy" placeholder="Your name" required />
         <button type="submit" class="btn btn-danger">Reject</button>
     </form>
 }

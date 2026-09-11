@@ -11,10 +11,7 @@ public class CreatePaymentRequestViewModel
     [Required]
     [RegularExpression("^(usd|eur|gbp)$", ErrorMessage = "Invalid currency")]
     public string Currency { get; set; } = "usd";
-    
-    [Required]
-    public string RequestedBy { get; set; } = string.Empty;
-    
+
     [Required]
     public string IdempotencyKey { get; set; } = string.Empty;
 }
