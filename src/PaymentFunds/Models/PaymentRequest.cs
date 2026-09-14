@@ -4,6 +4,9 @@ namespace PaymentFunds.Models;
 public class PaymentRequest
 {
     public int Id { get; set; }
+    public RequestType Type { get; set; } = RequestType.Disbursement;
+    public int? PayeeId { get; set; }
+    public Payee? Payee { get; set; }
     [Required]
     public string IdempotencyKey { get; set; } = string.Empty;
     public decimal Amount { get; set; }
