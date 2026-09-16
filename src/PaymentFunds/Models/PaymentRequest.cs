@@ -15,7 +15,7 @@ public class PaymentRequest
     public string RequestedBy { get; set; } = string.Empty;
     public string? ApprovedBy { get; set; }
     public string? RejectedBy { get; set; }
-    public string? StripePaymentIntentId { get; set; }
+    public string? ProviderReference { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? ProcessedAt { get; set; }
     public DateTime? ApprovedAt { get; set; }

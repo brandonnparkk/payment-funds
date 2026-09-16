@@ -82,7 +82,7 @@ public class PaymentProcessingWorker : BackgroundService
             
             if (result.Success)
             {
-                request.StripePaymentIntentId = result.ProviderReference;
+                request.ProviderReference = result.ProviderReference;
                 request.ProcessedAt = DateTime.UtcNow;
 
                 _logger.LogInformation(
