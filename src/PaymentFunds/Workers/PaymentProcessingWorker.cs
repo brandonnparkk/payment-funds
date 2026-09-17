@@ -69,7 +69,22 @@ public class PaymentProcessingWorker : BackgroundService
             using var scope = _services.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
 
-            var request = await db.PaymentRequests.AsTracking().FirstAsync(pr => pr.Id == id, ct);
+            var request = await db.PaymentRequests
+                .Include(pr => pr.Payee)
+                .AsTracking()
+                .FirstAsync(pr => pr.Id == id, ct);
+
+            if (request.Type == RequestType.Disbursement
+                && request.Payee?.Status != PayeeStatus.Verified)
+            {
+                request.Status = PaymentStatus.Failed;
+                await db.SaveChangesAsync(ct);
+
+                _logger.LogWarning(
+                    "Refusing disbursement {RequestId}: payee is {Status}",
+                    request.Id, request.Payee?.Status.ToString() ?? "missing");
+                return;
+            }
             var result = await _paymentProcessor.CreatePaymentAsync(
                 new PaymentInstruction(
                     request.Amount,

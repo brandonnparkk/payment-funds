@@ -4,6 +4,19 @@
 
 <form asp-action="Create" method="post">
     <div class="mb-3">
+        <label asp-for="Type" class="form-label"></label>
+        <select asp-for="Type" class="form-select"
+                asp-items="Html.GetEnumSelectList<PaymentFunds.Models.RequestType>()"></select>
+    </div>
+    <div class="mb-3">
+        <label asp-for="PayeeId" class="form-label"></label>
+        <select asp-for="PayeeId" class="form-select" asp-items="Model.AvailablePayees">
+            <option value="">-- select a verified payee --</option>
+        </select>
+        <span asp-validation-for="PayeeId" class="text-danger"></span>
+        <div class="form-text">Only verified payees appear here. Required for disbursements.</div>
+    </div>
+    <div class="mb-3">
         <label asp-for="Amount" class="form-label"></label>
         <input asp-for="Amount" class="form-control" />
         <span asp-validation-for="Amount" class="text-danger"></span>

@@ -54,7 +54,8 @@ public class PaymentRequestCreateTests : IntegrationTestBase
             ["__RequestVerificationToken"] = ExtractField(html, "__RequestVerificationToken"),
             ["IdempotencyKey"] = ExtractField(html, "IdempotencyKey"),
             ["Amount"] = "19.99",
-            ["Currency"] = "usd"
+            ["Currency"] = "usd",
+            ["Type"] = "Collection"
         };
     }
 

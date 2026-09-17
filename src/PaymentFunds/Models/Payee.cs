@@ -31,6 +31,6 @@ public class Payee
   public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
   public string? VerifiedBy { get; set; }
-  public DateTime VerifiedAt { get; set; }
+  public DateTime? VerifiedAt { get; set; }
   public ICollection<PaymentRequest> PaymentRequests { get; set; } = new List<PaymentRequest>();
 }
