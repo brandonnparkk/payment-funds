@@ -1,8 +1,90 @@
-﻿@{
-    ViewData["Title"] = "Home Page";
+﻿@model PaymentFunds.Models.DashboardViewModel
+@{
+    ViewData["Title"] = "Dashboard";
 }
 
-<div class="text-center">
-    <h1 class="display-4">Welcome</h1>
-    <p>Learn about <a href="https://learn.microsoft.com/aspnet/core">building Web apps with ASP.NET Core</a>.</p>
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h1 class="h3 mb-0">Dashboard</h1>
+    <a asp-controller="PaymentRequests" asp-action="Create" class="btn btn-primary">New request</a>
 </div>
+
+@if (Model.AwaitingMyApproval > 0 || Model.PayeesAwaitingVerification > 0)
+{
+    <div class="alert alert-warning">
+        <strong>Waiting on you.</strong>
+        @if (Model.AwaitingMyApproval > 0)
+        {
+            <a asp-controller="PaymentRequests" asp-action="Index" asp-route-status="PendingApproval">
+                @Model.AwaitingMyApproval request(s) to approve
+            </a>
+        }
+        @if (Model.AwaitingMyApproval > 0 && Model.PayeesAwaitingVerification > 0)
+        {
+            <span>&middot;</span>
+        }
+        @if (Model.PayeesAwaitingVerification > 0)
+        {
+            <a asp-controller="Payees" asp-action="Index">
+                @Model.PayeesAwaitingVerification payee(s) to verify
+            </a>
+        }
+    </div>
+}
+
+<div class="row g-3 mb-4">
+    @foreach (var card in new[]
+    {
+        ("Pending approval", Model.PendingApproval, "warning"),
+        ("Approved", Model.Approved, "info"),
+        ("Processing", Model.Processing, "primary"),
+        ("Completed", Model.Completed, "success"),
+        ("Failed", Model.Failed, "danger")
+    })
+    {
+        <div class="col-6 col-md">
+            <div class="card h-100 border-@card.Item3">
+                <div class="card-body py-3">
+                    <div class="text-muted small">@card.Item1</div>
+                    <div class="fs-3 fw-semibold">@card.Item2</div>
+                </div>
+            </div>
+        </div>
+    }
+</div>
+
+<h2 class="h5 mb-3">Recent activity</h2>
+
+@if (!Model.Recent.Any())
+{
+    <div class="card">
+        <div class="card-body text-center text-muted py-5">
+            <p class="mb-3">No payment requests yet.</p>
+            <a asp-controller="PaymentRequests" asp-action="Create" class="btn btn-primary">
+                Create the first one
+            </a>
+        </div>
+    </div>
+}
+else
+{
+    <div class="card">
+        <table class="table table-hover mb-0 align-middle">
+            <tbody>
+            @foreach (var r in Model.Recent)
+            {
+                <tr>
+                    <td class="ps-3">
+                        <a asp-controller="PaymentRequests" asp-action="Details" asp-route-id="@r.Id">
+                            #@r.Id
+                        </a>
+                    </td>
+                    <td class="fw-semibold">@r.Amount.ToMoney(r.Currency)</td>
+                    <td class="text-muted">@(r.Payee?.DisplayName ?? r.RequestedBy)</td>
+                    <td><span class="badge @r.Status.BadgeClass()">@r.Status.Humanize()</span></td>
+                    <td class="text-muted small text-end pe-3">@r.CreatedAt.ToString("d MMM HH:mm")</td>
+                </tr>
+            }
+            </tbody>
+        </table>
+    </div>
+}
