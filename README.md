@@ -14,6 +14,7 @@ Built to work through the patterns real payment systems depend on: explicit stat
 - [Tech stack](#tech-stack)
 - [Architecture](#architecture)
 - [Authentication and roles](#authentication-and-roles)
+- [Payees and disbursements](#payees-and-disbursements)
 - [Key design decisions](#key-design-decisions)
 - [Getting started](#getting-started)
 - [Running the tests](#running-the-tests)
@@ -30,9 +31,9 @@ A payment request moves through an explicit state machine. Nothing skips a step,
 
 ![How PaymentFunds works](src/PaymentFunds/PaymentFunds-how-it-works.svg)
 
-1. **Submit.** A signed-in user fills in amount and currency. The requester is taken from their authenticated identity, never from form input. The server mints an idempotency key when it renders the form, so resubmitting the same form cannot create a duplicate.
+1. **Submit.** A signed-in user picks a request type, an amount and currency, and for a disbursement a verified payee. The requester is taken from their authenticated identity, never from form input. The server mints an idempotency key when it renders the form, so resubmitting the same form cannot create a duplicate.
 2. **Approve.** A user in the `Approver` role approves or rejects, and cannot act on their own request. Both actions are recorded against the authenticated user with a timestamp. Only `PendingApproval` requests can be acted on.
-3. **Process.** A background worker polls for `Approved` rows every five seconds, claims one atomically, and calls Stripe to create a PaymentIntent. The request's idempotency key is forwarded to Stripe so a retry cannot double-charge.
+3. **Process.** A background worker polls for `Approved` rows every five seconds, claims one atomically, re-checks that the payee is still verified, and calls Stripe. The request's idempotency key is forwarded to Stripe so a retry cannot double-charge.
 4. **Settle.** Stripe calls back over a webhook when the payment resolves. The signature is verified, the event is deduplicated, and the request moves to `Completed` or `Failed`.
 
 The web request never waits on Stripe. Approval returns immediately and the payment happens out of band.
@@ -65,7 +66,7 @@ The app has three independent entry points that never call each other:
 - **A timer** drives `PaymentProcessingWorker`, which starts with the app and polls forever.
 - **HTTP from Stripe** reaches `StripeWebhookController`, which is `[AllowAnonymous]` and authenticated by signature instead.
 
-They coordinate entirely through rows in Postgres. The `Status` column is the message: setting `Approved` posts a job, and the worker flipping it to `Processing` claims it. `StripePaymentIntentId` is the join key an inbound webhook uses to find the request it refers to.
+They coordinate entirely through rows in Postgres. The `Status` column is the message: setting `Approved` posts a job, and the worker flipping it to `Processing` claims it. `ProviderReference` is the join key an inbound webhook uses to find the request it refers to.
 
 ---
 
@@ -98,6 +99,42 @@ Development accounts are seeded at startup from configuration:
 | `approver@paymentfunds.local` | `Approver` |
 
 Their passwords come from user secrets rather than source, and seeding is skipped with a warning if they are not set.
+
+---
+
+## Payees and disbursements
+
+A request records two different people. `RequestedBy` is who asked for the money. The `Payee` is who receives it. Conflating those is what makes a workflow demo rather than a disbursement system.
+
+`RequestType` distinguishes a **Collection** (money in, which is what a Stripe `PaymentIntent` actually does) from a **Disbursement** (money out). Only disbursements require a payee.
+
+### Payee lifecycle
+
+| Status | Meaning |
+|---|---|
+| `Unverified` | Created, cannot receive money |
+| `Verified` | Payout destination confirmed, eligible |
+| `Suspended` | Blocked, including for requests already approved |
+
+Any signed-in user can add a payee. Only an `Approver` can verify one, and **not one they created themselves**.
+
+That restriction is the point of the feature. Creating a fake vendor and verifying it is the classic accounts-payable fraud, and it doesn't require compromising the payment approval at all: stand up "Acme Consulting" pointing at your own account, verify it, then raise requests that a second person approves in good faith. The approval was real; the payee was not. So payee verification carries the same separation of duties as payment approval.
+
+Suspension is deliberately unrestricted. Blocking money movement is always allowed; only enabling it is gated.
+
+Verification also requires `TaxFormOnFile`, standing in for the compliance checks a real system would run before paying anyone.
+
+### No raw bank details, anywhere
+
+A `Payee` stores an opaque `ProviderAccountReference` and a masked `PayoutDestinationMask` such as `••••4321`. There is no account number, routing number, or IBAN in the schema, and the create form accepts **only four digits**, so a full account number cannot be submitted even deliberately.
+
+Same reasoning as card data. Holding raw bank credentials creates compliance obligations there's no reason to take on, and a breach that ends the company. The correct answer to "where do you store bank details" is that you don't.
+
+### The verification check happens twice
+
+A payee verified when a request was raised can be suspended before the worker pays it, and requests can sit awaiting approval for a while. Checking once at submission and acting later means acting on stale information, which is a time-of-check to time-of-use gap.
+
+So the guard runs in both places: `PaymentRequestsController.Create` refuses to create a disbursement to an unverified payee, and `PaymentProcessingWorker` re-reads the payee immediately before calling Stripe and fails the request if the status has changed. The last line of defence sits closest to the money.
 
 ---
 
@@ -329,17 +366,26 @@ payload bytes.
 src/PaymentFunds/
   Controllers/
     AccountController.cs           Login, logout, access denied
+    HomeController.cs              Dashboard
+    PayeesController.cs            List, create, verify, suspend
     PaymentRequestsController.cs   Create, approve, reject, list, details
     StripeWebhookController.cs     POST /api/stripe/webhook
   Data/
     ApplicationDbContext.cs        IdentityDbContext, DbSets, unique indexes
     IdentitySeeder.cs              Roles and development accounts
+  Extensions/
+    DisplayExtensions.cs           Money formatting and status badge classes
   Models/
     PaymentRequest.cs              Core entity
     PaymentStatus.cs               State machine enum
+    RequestType.cs                 Collection or Disbursement
+    Payee.cs                       Who receives the money
+    PayeeStatus.cs                 Unverified, Verified, Suspended
     ProcessedStripeEvent.cs        Webhook deduplication ledger
     ApplicationUser.cs             IdentityUser with DisplayName
     CreatePaymentRequestViewModel.cs
+    CreatePayeeViewModel.cs
+    DashboardViewModel.cs
     LoginViewModel.cs
   Payments/
     IPaymentProcessor.cs           Provider-agnostic port
@@ -358,6 +404,7 @@ tests/PaymentFunds.Tests/
   StripeWebhookTests.cs            Signature, transition, deduplication
   PaymentRequestAuthTests.cs       Roles and separation of duties
   PaymentRequestCreateTests.cs     Idempotency through the form
+  PayeeTests.cs                    Verification rules and the disbursement gate
   PaymentProcessorTests.cs         Fake processor unit tests
 
 k8s/                               PostgreSQL manifests (sops-encrypted secret)
@@ -376,11 +423,31 @@ k8s/                               PostgreSQL manifests (sops-encrypted secret)
 | `Amount` | decimal | Converted to minor units for Stripe |
 | `Currency` | string | Lowercase ISO code (`usd`, `eur`, `gbp`) |
 | `Status` | enum | See state machine above |
+| `Type` | enum | `Collection` or `Disbursement` |
+| `PayeeId` | int? | Required for disbursements, null for collections |
 | `RequestedBy` | string | Submitter, from the authenticated user |
 | `ApprovedBy` / `ApprovedAt` | string? / DateTime? | Approval audit, from the authenticated user |
 | `RejectedBy` / `RejectedAt` | string? / DateTime? | Rejection audit, from the authenticated user |
-| `StripePaymentIntentId` | string? | Join key for incoming webhooks |
+| `ProviderReference` | string? | Join key for incoming webhooks; provider-neutral by design |
 | `CreatedAt` / `ProcessedAt` | DateTime / DateTime? | |
+
+`PayeeId` is nullable because a collection has no payee and because existing rows predate the column. The rule "a disbursement must have a verified payee" can't be expressed as a database constraint, so it lives in application code and is covered by tests.
+
+### Payee
+
+| Column | Type | Notes |
+|---|---|---|
+| `Id` | int | Primary key |
+| `DisplayName` | string | |
+| `Email` | string | Unique index |
+| `Status` | enum | `Unverified`, `Verified`, `Suspended` |
+| `ProviderAccountReference` | string? | Opaque id from the provider, never a bank account number |
+| `PayoutDestinationMask` | string? | Display only, for example `••••4321` |
+| `TaxFormOnFile` | bool | Required before verification |
+| `CreatedBy` / `CreatedAt` | string / DateTime | Creator cannot verify their own payee |
+| `VerifiedBy` / `VerifiedAt` | string? / DateTime? | |
+
+The foreign key from `PaymentRequest` uses `DeleteBehavior.Restrict`. Deleting a payee with payment history fails rather than orphaning the audit trail. Retiring one is what `Suspended` is for.
 
 ### ProcessedStripeEvent
 
@@ -407,13 +474,13 @@ cost of no referential integrity.
 
 Documented deliberately rather than hidden.
 
-- **`PaymentIntent` is a charge, not a disbursement.** Stripe's `PaymentIntent` collects money. Real disbursement uses `Payout` or `Transfer` with Connect, which requires recipient onboarding and compliance handling.
+- **Even a disbursement settles through a `PaymentIntent`.** The domain now models disbursement correctly, but the Stripe call underneath still creates a charge. Real payouts use `Payout` or `Transfer` with Connect, which requires recipient onboarding and compliance handling that test mode doesn't provide.
 - **Rows can strand in `Processing`.** The worker catches `StripeException` but not other failures. A crash after claiming a row leaves it claimed with nothing to retry it. There is no attempt counter, backoff, dead letter, or lease expiry. A sweeper is planned.
-- **No payee model.** A request records who asked for money, not who receives it. There is no payout destination, tax identity, or verification state.
 - **No ledger or balance.** Nothing tracks whether funds are available, so insufficient funds is not a reachable state.
 - **No approval thresholds.** Every request needs exactly one approver regardless of amount. Dual approval over a limit is planned.
-- **Coverage is uneven.** The webhook boundary, the authorization rules, and form idempotency are covered. The worker's polling and claiming logic is not.
+- **Coverage is uneven.** The webhook boundary, the authorization rules, payee verification, and form idempotency are covered. The worker's polling, claiming, and payee re-check are not, because the factory removes hosted services during tests.
 - **`StripeConfiguration.ApiKey` is a global static.** `StripePaymentProcessor` reads it implicitly rather than receiving injected configuration.
+- **No browser tests.** Coverage is HTTP-level through `WebApplicationFactory`. Playwright is planned.
 - **The app is not containerized.** Only PostgreSQL runs in Kubernetes. The app runs on the host and reaches the database through `kubectl port-forward`.
 
 ---
@@ -430,9 +497,10 @@ Documented deliberately rather than hidden.
 | 5. Webhooks | Complete |
 | 6. Test harness and the Stripe seam | Complete |
 | 7. Identity and roles | Complete |
-| 8. Payees and disbursement modeling | Next |
-| 9. Double-entry ledger | Planned |
-| 10. Observability and Kubernetes deployment | Planned |
+| 8. Payees and disbursement modeling | Complete |
+| 8.5. Interface polish | In progress |
+| 9. Double-entry ledger | Next |
+| 10. Containerization, observability, Kubernetes deployment | Planned |
 
 Deferred: approval policy engine (thresholds, dual approval) and worker resilience
 (retry, backoff, dead-letter, stuck-row sweeper).
