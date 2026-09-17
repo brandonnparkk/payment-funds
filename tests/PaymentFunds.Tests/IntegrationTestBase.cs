@@ -50,7 +50,7 @@ public abstract class IntegrationTestBase
     {
         using var scope = Factory.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
-        await db.Database.ExecuteSqlRawAsync("""TRUNCATE "PaymentRequests", "ProcessedStripeEvents" RESTART IDENTITY CASCADE""");
+        await db.Database.ExecuteSqlRawAsync("""TRUNCATE "PaymentRequests", "ProcessedStripeEvents", "Payees" RESTART IDENTITY CASCADE""");
     }
 
     [OneTimeTearDown]

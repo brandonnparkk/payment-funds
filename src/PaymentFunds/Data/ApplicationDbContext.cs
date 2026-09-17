@@ -10,6 +10,7 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser>
         : base(options) {}
 
     public DbSet<PaymentRequest> PaymentRequests => Set<PaymentRequest>();
+    public DbSet<Payee> Payees => Set<Payee>();
     public DbSet<ProcessedStripeEvent> ProcessedStripeEvents => Set<ProcessedStripeEvent>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -23,5 +24,15 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser>
         modelBuilder.Entity<ProcessedStripeEvent>()
             .HasIndex(e => e.EventId)
             .IsUnique();
+
+        modelBuilder.Entity<Payee>()
+            .HasIndex(p => p.Email)
+            .IsUnique();
+        
+        modelBuilder.Entity<PaymentRequest>()
+            .HasOne(r => r.Payee)
+            .WithMany(p => p.PaymentRequests)
+            .HasForeignKey(r => r.PayeeId)
+            .OnDelete(DeleteBehavior.Restrict);
     }
 }

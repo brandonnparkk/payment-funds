@@ -4,6 +4,9 @@ namespace PaymentFunds.Models;
 public class PaymentRequest
 {
     public int Id { get; set; }
+    public RequestType Type { get; set; } = RequestType.Disbursement;
+    public int? PayeeId { get; set; }
+    public Payee? Payee { get; set; }
     [Required]
     public string IdempotencyKey { get; set; } = string.Empty;
     public decimal Amount { get; set; }
@@ -12,7 +15,7 @@ public class PaymentRequest
     public string RequestedBy { get; set; } = string.Empty;
     public string? ApprovedBy { get; set; }
     public string? RejectedBy { get; set; }
-    public string? StripePaymentIntentId { get; set; }
+    public string? ProviderReference { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? ProcessedAt { get; set; }
     public DateTime? ApprovedAt { get; set; }

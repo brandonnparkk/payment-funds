@@ -56,7 +56,7 @@ public class StripeWebhookController : ControllerBase
         if (stripeEvent.Data.Object is PaymentIntent intent)
         {
             var request = await _context.PaymentRequests
-                .FirstOrDefaultAsync(r => r.StripePaymentIntentId == intent.Id);
+                .FirstOrDefaultAsync(r => r.ProviderReference == intent.Id);
 
             if (request != null)
             {

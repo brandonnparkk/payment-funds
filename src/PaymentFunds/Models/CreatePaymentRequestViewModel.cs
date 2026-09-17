@@ -1,4 +1,6 @@
+using System.ComponentModel;
 using System.ComponentModel.DataAnnotations;
+using Microsoft.AspNetCore.Mvc.Rendering;
 
 namespace PaymentFunds.Models;
 
@@ -14,4 +16,12 @@ public class CreatePaymentRequestViewModel
 
     [Required]
     public string IdempotencyKey { get; set; } = string.Empty;
+
+    [Required]
+    public RequestType Type { get; set; } = RequestType.Disbursement;
+
+    [Display(Name = "Payee")]
+    public int? PayeeId { get; set; }
+
+    public IEnumerable<SelectListItem> AvailablePayees { get; set; } = [];
 }

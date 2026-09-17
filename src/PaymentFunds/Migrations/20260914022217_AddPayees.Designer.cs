@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using PaymentFunds.Data;
@@ -11,9 +12,11 @@ using PaymentFunds.Data;
 namespace PaymentFunds.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    partial class ApplicationDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260914022217_AddPayees")]
+    partial class AddPayees
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -258,7 +261,7 @@ namespace PaymentFunds.Migrations
                     b.Property<bool>("TaxFormOnFile")
                         .HasColumnType("boolean");
 
-                    b.Property<DateTime?>("VerifiedAt")
+                    b.Property<DateTime>("VerifiedAt")
                         .HasColumnType("timestamp with time zone");
 
                     b.Property<string>("VerifiedBy")
@@ -306,9 +309,6 @@ namespace PaymentFunds.Migrations
                     b.Property<DateTime?>("ProcessedAt")
                         .HasColumnType("timestamp with time zone");
 
-                    b.Property<string>("ProviderReference")
-                        .HasColumnType("text");
-
                     b.Property<DateTime?>("RejectedAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -321,6 +321,9 @@ namespace PaymentFunds.Migrations
 
                     b.Property<int>("Status")
                         .HasColumnType("integer");
+
+                    b.Property<string>("StripePaymentIntentId")
+                        .HasColumnType("text");
 
                     b.Property<int>("Type")
                         .HasColumnType("integer");

@@ -4,6 +4,7 @@ using PaymentFunds.Models;
 using PaymentFunds.Data;
 using Npgsql;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc.Rendering;
 
 namespace PaymentFunds.Controllers;
 
@@ -20,19 +21,32 @@ public class PaymentRequestsController : Controller
     public async Task<IActionResult> Index()
     {
         var requests = await _context.PaymentRequests
+            .Include(r => r.Payee)
             .OrderByDescending(r => r.CreatedAt)
             .ToListAsync();
         
         return View(requests);
     }
 
-    public IActionResult Create()
+    public async Task<IActionResult> Create()
     {
         return View(new CreatePaymentRequestViewModel
         {
-            IdempotencyKey = Guid.NewGuid().ToString()
+            IdempotencyKey = Guid.NewGuid().ToString(),
+            AvailablePayees = await VerifiedPayeeOptionsAsync()
         });
     }
+
+    private async Task<List<SelectListItem>> VerifiedPayeeOptionsAsync() =>
+        await _context.Payees
+            .Where(p => p.Status == PayeeStatus.Verified)
+            .OrderBy(p => p.DisplayName)
+            .Select(p => new SelectListItem
+            {
+                Value = p.Id.ToString(),
+                Text = p.DisplayName + " (" + (p.PayoutDestinationMask ?? "no destination") + ")"
+            })
+            .ToListAsync();
 
     [HttpPost]
     [ValidateAntiForgeryToken]
@@ -40,7 +54,29 @@ public class PaymentRequestsController : Controller
     {
         if (!ModelState.IsValid)
         {
+            model.AvailablePayees = await VerifiedPayeeOptionsAsync();
             return View(model);
+        }
+
+        Payee? payee = null;
+
+        if (model.Type == RequestType.Disbursement)
+        {
+            if (model.PayeeId is null)
+            {
+                ModelState.AddModelError(nameof(model.PayeeId), "A disbursement requires a payee.");
+                model.AvailablePayees = await VerifiedPayeeOptionsAsync();
+                return View(model);
+            }
+            
+            payee = await _context.Payees.FindAsync(model.PayeeId.Value);
+
+            if (payee is null || payee.Status != PayeeStatus.Verified)
+            {
+                ModelState.AddModelError(nameof(model.PayeeId), "That payee is not verified.");
+                model.AvailablePayees = await VerifiedPayeeOptionsAsync();
+                return View(model);
+            }
         }
 
         var existing = await _context.PaymentRequests.
@@ -58,7 +94,9 @@ public class PaymentRequestsController : Controller
             Currency = model.Currency,
             RequestedBy = User.Identity!.Name!,
             Status = PaymentStatus.PendingApproval,
-            CreatedAt = DateTime.UtcNow
+            CreatedAt = DateTime.UtcNow,
+            Type = model.Type,
+            PayeeId = payee?.Id
         };
 
         _context.PaymentRequests.Add(paymentRequest);
@@ -77,7 +115,9 @@ public class PaymentRequestsController : Controller
 
     public async Task<IActionResult> Details(int id)
     {
-        var request = await _context.PaymentRequests.FindAsync(id);
+        var request = await _context.PaymentRequests
+            .Include(r => r.Payee)
+            .FirstOrDefaultAsync(r => r.Id == id);
         if (request == null) return NotFound();
         return View(request);
     }

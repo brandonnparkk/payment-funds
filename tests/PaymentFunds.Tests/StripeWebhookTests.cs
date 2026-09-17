@@ -106,7 +106,7 @@ public class StripeWebhookTests : IntegrationTestBase
             Currency = "usd",
             Status = PaymentStatus.Processing,
             RequestedBy = "test",
-            StripePaymentIntentId = intentId
+            ProviderReference = intentId
         });
         await db.SaveChangesAsync();
     }
