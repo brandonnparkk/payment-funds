@@ -18,7 +18,7 @@ public class PaymentRequestsController : Controller
         _context = context;
     }
 
-        public async Task<IActionResult> Index(PaymentStatus? status)
+    public async Task<IActionResult> Index(PaymentStatus? status)
     {
         var query = _context.PaymentRequests
             .Include(r => r.Payee)
