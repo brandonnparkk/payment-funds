@@ -18,14 +18,22 @@ public class PaymentRequestsController : Controller
         _context = context;
     }
 
-    public async Task<IActionResult> Index()
+    public async Task<IActionResult> Index(PaymentStatus? status)
     {
-        var requests = await _context.PaymentRequests
+        var query = _context.PaymentRequests
             .Include(r => r.Payee)
+            .AsQueryable();
+
+        if (status is not null)
+        {
+            query = query.Where(r => r.Status == status);
+        }
+
+        ViewData["StatusFilter"] = status;
+
+        return View(await query
             .OrderByDescending(r => r.CreatedAt)
-            .ToListAsync();
-        
-        return View(requests);
+            .ToListAsync());
     }
 
     public async Task<IActionResult> Create()

@@ -1,25 +1,118 @@
 @model PaymentFunds.Models.PaymentRequest
+@{
+    ViewData["Title"] = $"Request #{Model.Id}";
 
-<h1>Payment Request #@Model.Id</h1>
+    var rejected = Model.Status == PaymentStatus.Rejected;
+    var failed = Model.Status == PaymentStatus.Failed;
+    var settled = Model.Status is PaymentStatus.Completed or PaymentStatus.Failed;
 
-<dl class="row">
-    <dt class="col-sm-3">Type</dt><dd class="col-sm-9">@Model.Type</dd>
-    <dt class="col-sm-3">Payee</dt>
-    <dd class="col-sm-9">@(Model.Payee is null ? "-" : $"{Model.Payee.DisplayName} {Model.Payee.PayoutDestinationMask}")</dd>
-    <dt class="col-sm-3">Amount</dt><dd class="col-sm-9">@Model.Amount @Model.Currency</dd>
-    <dt class="col-sm-3">Requested By</dt><dd class="col-sm-9">@Model.RequestedBy</dd>
-    <dt class="col-sm-3">Status</dt><dd class="col-sm-9">@Model.Status</dd>
-    <dt class="col-sm-3">Created</dt><dd class="col-sm-9">@Model.CreatedAt</dd>
-    <dt class="col-sm-3">Approved By</dt><dd class="col-sm-9">@(Model.ApprovedBy ?? "-")</dd>
-    <dt class="col-sm-3">Rejected By</dt><dd class="col-sm-9">@(Model.RejectedBy ?? "-")</dd>
-</dl>
+    var steps = new List<(string Label, string? Actor, DateTime? At, bool Done, string Badge)>
+    {
+        ("Submitted", Model.RequestedBy, Model.CreatedAt, true, "text-bg-secondary")
+    };
 
-@if (Model.Status == PaymentFunds.Models.PaymentStatus.PendingApproval)
-{
-    <form asp-action="Approve" asp-route-id="@Model.Id" method="post" class="d-inline">
-        <button type="submit" class="btn btn-success">Approve</button>
-    </form>
-    <form asp-action="Reject" asp-route-id="@Model.Id" method="post" class="d-inline">
-        <button type="submit" class="btn btn-danger">Reject</button>
-    </form>
+    if (rejected)
+    {
+        steps.Add(("Rejected", Model.RejectedBy, Model.RejectedAt, true, "text-bg-danger"));
+    }
+    else
+    {
+        steps.Add(("Approved", Model.ApprovedBy, Model.ApprovedAt,
+            Model.ApprovedAt is not null, "text-bg-info"));
+
+        steps.Add(("Sent to provider", Model.ProviderReference, Model.ProcessedAt,
+            Model.ProviderReference is not null, "text-bg-primary"));
+
+        steps.Add((failed ? "Failed" : "Settled", null, Model.SettledAt,
+            settled, failed ? "text-bg-danger" : "text-bg-success"));
+    }
 }
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+        <h1 class="h3 mb-1">Request #@Model.Id</h1>
+        <span class="badge @Model.Status.BadgeClass()">@Model.Status.Humanize()</span>
+        <span class="text-muted ms-2">@Model.Type.Humanize()</span>
+    </div>
+    <a asp-action="Index" class="btn btn-outline-secondary btn-sm">Back to list</a>
+</div>
+
+<div class="row g-4">
+    <div class="col-lg-5">
+        <div class="card h-100">
+            <div class="card-header fw-semibold">Details</div>
+            <div class="card-body">
+                <div class="fs-2 fw-semibold mb-3">@Model.Amount.ToMoney(Model.Currency)</div>
+                <dl class="row mb-0 small">
+                    <dt class="col-5 text-muted">Payee</dt>
+                    <dd class="col-7">
+                        @if (Model.Payee is not null)
+                        {
+                            @Model.Payee.DisplayName
+                            <div class="text-muted font-monospace">@Model.Payee.PayoutDestinationMask</div>
+                            <span class="badge @Model.Payee.Status.BadgeClass()">@Model.Payee.Status.Humanize()</span>
+                        }
+                        else
+                        {
+                            <span class="text-muted">Not applicable</span>
+                        }
+                    </dd>
+
+                    <dt class="col-5 text-muted">Requested by</dt>
+                    <dd class="col-7">@Model.RequestedBy</dd>
+
+                    <dt class="col-5 text-muted">Idempotency key</dt>
+                    <dd class="col-7 font-monospace text-truncate">@Model.IdempotencyKey</dd>
+
+                    <dt class="col-5 text-muted">Provider reference</dt>
+                    <dd class="col-7 font-monospace text-truncate">@(Model.ProviderReference ?? "—")</dd>
+                </dl>
+            </div>
+
+            @if (Model.Status == PaymentStatus.PendingApproval)
+            {
+                <div class="card-footer bg-white">
+                    @if (User.IsInRole("Approver") && Model.RequestedBy != User.Identity!.Name)
+                    {
+                        <form asp-action="Approve" asp-route-id="@Model.Id" method="post" class="d-inline">
+                            <button type="submit" class="btn btn-success">Approve</button>
+                        </form>
+                        <form asp-action="Reject" asp-route-id="@Model.Id" method="post" class="d-inline">
+                            <button type="submit" class="btn btn-outline-danger">Reject</button>
+                        </form>
+                    }
+                    else
+                    {
+                        <span class="text-muted small">
+                            Awaiting approval by an approver other than the requester.
+                        </span>
+                    }
+                </div>
+            }
+        </div>
+    </div>
+
+    <div class="col-lg-7">
+        <div class="card h-100">
+            <div class="card-header fw-semibold">Timeline</div>
+            <div class="list-group list-group-flush">
+                @foreach (var s in steps)
+                {
+                    <div class="list-group-item d-flex align-items-start @(s.Done ? "" : "opacity-50")">
+                        <span class="badge rounded-pill @(s.Done ? s.Badge : "text-bg-light") me-3 mt-1">&#9679;</span>
+                        <div class="flex-grow-1">
+                            <div class="fw-semibold">@s.Label</div>
+                            @if (s.Actor is not null)
+                            {
+                                <div class="small text-muted font-monospace text-truncate">@s.Actor</div>
+                            }
+                        </div>
+                        <div class="small text-muted text-end text-nowrap">
+                            @(s.At?.ToString("d MMM yyyy HH:mm") ?? "—")
+                        </div>
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+</div>
