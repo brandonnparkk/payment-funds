@@ -20,4 +20,5 @@ public class PaymentRequest
     public DateTime? ProcessedAt { get; set; }
     public DateTime? ApprovedAt { get; set; }
     public DateTime? RejectedAt { get; set; }
+    public DateTime? SettledAt { get; set; }
 }

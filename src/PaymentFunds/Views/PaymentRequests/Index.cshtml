@@ -1,25 +1,88 @@
 @model IEnumerable<PaymentFunds.Models.PaymentRequest>
+@{
+    ViewData["Title"] = "Payment requests";
+    var active = ViewData["StatusFilter"] as PaymentStatus?;
+}
 
-<h1>Payment Requests</h1>
-<a asp-action="Create" class="btn btn-primary mb-3">New Request</a>
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h1 class="h3 mb-0">Payment requests</h1>
+    <a asp-action="Create" class="btn btn-primary">New request</a>
+</div>
 
-<table class="table">
-    <thead>
-        <tr>
-            <th>Id</th><th>Amount</th><th>Currency</th><th>Requested By</th><th>Status</th><th></th>
-        </tr>
-    </thead>
-    <tbody>
-    @foreach (var r in Model)
+<div class="mb-3">
+    <a asp-action="Index" class="btn btn-sm @(active is null ? "btn-dark" : "btn-outline-secondary")">
+        All
+    </a>
+    @foreach (var s in Enum.GetValues<PaymentStatus>())
     {
-        <tr>
-            <td>@r.Id</td>
-            <td>@r.Amount</td>
-            <td>@r.Currency</td>
-            <td>@r.RequestedBy</td>
-            <td>@r.Status</td>
-            <td><a asp-action="Details" asp-route-id="@r.Id">View</a></td>
-        </tr>
+        <a asp-action="Index" asp-route-status="@s"
+           class="btn btn-sm @(active == s ? "btn-dark" : "btn-outline-secondary")">
+            @s.Humanize()
+        </a>
     }
-    </tbody>
-</table>
+</div>
+
+@if (!Model.Any())
+{
+    <div class="card">
+        <div class="card-body text-center text-muted py-5">
+            <p class="mb-3">
+                @(active is null
+                    ? "No payment requests yet."
+                    : $"Nothing with status {active.Value.Humanize().ToLowerInvariant()}.")
+            </p>
+            @if (active is null)
+            {
+                <a asp-action="Create" class="btn btn-primary">Create the first one</a>
+            }
+            else
+            {
+                <a asp-action="Index" class="btn btn-outline-secondary">Clear filter</a>
+            }
+        </div>
+    </div>
+}
+else
+{
+    <div class="card">
+        <table class="table table-hover align-middle mb-0">
+            <thead class="table-light">
+                <tr>
+                    <th class="ps-3">Request</th>
+                    <th>Type</th>
+                    <th>Payee</th>
+                    <th class="text-end">Amount</th>
+                    <th>Requested by</th>
+                    <th>Status</th>
+                    <th class="text-end pe-3">Created</th>
+                </tr>
+            </thead>
+            <tbody>
+            @foreach (var r in Model)
+            {
+                <tr>
+                    <td class="ps-3">
+                        <a asp-action="Details" asp-route-id="@r.Id" class="fw-semibold">#@r.Id</a>
+                    </td>
+                    <td class="text-muted">@r.Type.Humanize()</td>
+                    <td>
+                        @if (r.Payee is not null)
+                        {
+                            <div>@r.Payee.DisplayName</div>
+                            <div class="small text-muted font-monospace">@r.Payee.PayoutDestinationMask</div>
+                        }
+                        else
+                        {
+                            <span class="text-muted">&mdash;</span>
+                        }
+                    </td>
+                    <td class="text-end fw-semibold">@r.Amount.ToMoney(r.Currency)</td>
+                    <td class="text-muted small">@r.RequestedBy</td>
+                    <td><span class="badge @r.Status.BadgeClass()">@r.Status.Humanize()</span></td>
+                    <td class="text-end pe-3 text-muted small">@r.CreatedAt.ToString("d MMM HH:mm")</td>
+                </tr>
+            }
+            </tbody>
+        </table>
+    </div>
+}

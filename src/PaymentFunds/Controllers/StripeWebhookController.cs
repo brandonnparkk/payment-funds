@@ -64,11 +64,12 @@ public class StripeWebhookController : ControllerBase
                 {
                     case "payment_intent.succeeded":
                         request.Status = PaymentStatus.Completed;
-                        request.ProcessedAt = DateTime.UtcNow;
+                        request.SettledAt = DateTime.UtcNow;
                         break;
 
                     case "payment_intent.payment_failed":
                         request.Status = PaymentStatus.Failed;
+                        request.SettledAt = DateTime.UtcNow;
                         break;
 
                     default:
