@@ -1,0 +1,134 @@
+@model PaymentFunds.Models.LedgerViewModel
+@{
+    ViewData["Title"] = "Ledger";
+}
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h1 class="h3 mb-0">Ledger</h1>
+    <div>
+        @foreach (var c in new[] { "usd", "eur", "gbp" })
+        {
+            <a asp-action="Index" asp-route-currency="@c"
+               class="btn btn-sm @(Model.Currency == c ? "btn-dark" : "btn-outline-secondary")">
+                @c.ToUpperInvariant()
+            </a>
+        }
+    </div>
+</div>
+
+@if (TempData["Error"] is string error)
+{
+    <div class="alert alert-danger">@error</div>
+}
+
+<div class="row g-3 mb-4">
+    <div class="col-md-4">
+        <div class="card h-100 border-success">
+            <div class="card-body">
+                <div class="text-muted small">Available to disburse</div>
+                <div class="fs-3 fw-semibold">@Model.AvailableMinor.ToMoneyMinor(Model.Currency)</div>
+                <div class="text-muted small">Cash less outstanding payables</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-8">
+        <div class="card h-100">
+            <table class="table mb-0 align-middle">
+                <thead class="table-light">
+                    <tr>
+                        <th class="ps-3">Account</th>
+                        <th>Type</th>
+                        <th class="text-end pe-3">Balance</th>
+                    </tr>
+                </thead>
+                <tbody>
+                @foreach (var b in Model.Balances)
+                {
+                    <tr>
+                        <td class="ps-3">
+                            <span class="font-monospace small text-muted">@b.Code</span>
+                            <div>@b.Name</div>
+                        </td>
+                        <td class="text-muted">@b.Type</td>
+                        <td class="text-end pe-3 fw-semibold">
+                            @b.BalanceMinor.ToMoneyMinor(Model.Currency)
+                        </td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+@if (User.IsInRole("Approver"))
+{
+    <div class="card mb-4">
+        <div class="card-body">
+            <form asp-action="Fund" method="post" class="row g-2 align-items-end">
+                <input type="hidden" name="currency" value="@Model.Currency" />
+                <div class="col-auto">
+                    <label class="form-label small text-muted">
+                        Add funds (@Model.Currency.ToUpperInvariant())
+                    </label>
+                    <input name="amount" type="number" step="0.01" min="0.01" class="form-control" />
+                </div>
+                <div class="col-auto">
+                    <button type="submit" class="btn btn-outline-primary">Fund platform</button>
+                </div>
+            </form>
+        </div>
+    </div>
+}
+
+<h2 class="h5 mb-3">Recent entries</h2>
+
+@if (!Model.Entries.Any())
+{
+    <div class="card">
+        <div class="card-body text-muted text-center py-5">No entries yet.</div>
+    </div>
+}
+else
+{
+    <div class="card">
+        <table class="table table-sm align-middle mb-0">
+            <thead class="table-light">
+                <tr>
+                    <th class="ps-3">Transaction</th>
+                    <th>Account</th>
+                    <th>Description</th>
+                    <th class="text-end">Debit</th>
+                    <th class="text-end pe-3">Credit</th>
+                </tr>
+            </thead>
+            <tbody>
+            @foreach (var e in Model.Entries)
+            {
+                <tr>
+                    <td class="ps-3 font-monospace small text-muted">
+                        @e.TransactionId.ToString()[..8]
+                    </td>
+                    <td class="font-monospace small">@e.Account.Code</td>
+                    <td class="small">
+                        @e.Description
+                        @if (e.PaymentRequestId is not null)
+                        {
+                            <a asp-controller="PaymentRequests" asp-action="Details"
+                               asp-route-id="@e.PaymentRequestId">#@e.PaymentRequestId</a>
+                        }
+                    </td>
+                    <td class="text-end">
+                        @(e.Direction == EntryDirection.Debit
+                            ? e.AmountMinor.ToMoneyMinor(e.Currency) : "")
+                    </td>
+                    <td class="text-end pe-3">
+                        @(e.Direction == EntryDirection.Credit
+                            ? e.AmountMinor.ToMoneyMinor(e.Currency) : "")
+                    </td>
+                </tr>
+            }
+            </tbody>
+        </table>
+    </div>
+}

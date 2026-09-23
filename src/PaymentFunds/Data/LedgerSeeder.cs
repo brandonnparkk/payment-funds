@@ -7,10 +7,11 @@ public static class LedgerSeeder
 {
     private static readonly (string Code, string Name, LedgerAccountType Type)[] Accounts =
     [
-        ("CASH",    "Platform cash",    LedgerAccountType.Asset),
-        ("PAYABLE", "Payable to payees", LedgerAccountType.Liability),
+        ("CASH",    "Platform cash",        LedgerAccountType.Asset),
+        ("PAYABLE", "Payable to payees",    LedgerAccountType.Liability),
         ("EXPENSE", "Disbursement expense", LedgerAccountType.Expense),
-        ("REVENUE", "Collected revenue", LedgerAccountType.Revenue)
+        ("REVENUE", "Collected revenue",    LedgerAccountType.Revenue),
+        ("OPENING", "Opening balance",      LedgerAccountType.Equity)
     ];
 
     private static readonly string[] Currencies = ["usd", "eur", "gbp"];
