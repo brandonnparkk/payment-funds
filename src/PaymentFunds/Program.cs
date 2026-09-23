@@ -4,6 +4,7 @@ using PaymentFunds.Models;
 using PaymentFunds.Data;
 using PaymentFunds.Workers;
 using PaymentFunds.Payments;
+using PaymentFunds.Ledger;
 using Stripe;
 var builder = WebApplication.CreateBuilder(args);
 
@@ -15,7 +16,7 @@ builder.Services.AddHostedService<PaymentProcessingWorker>();
 builder.Services.AddDbContext<ApplicationDbContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
 builder.Services.AddSingleton<IPaymentProcessor, StripePaymentProcessor>();
-builder.Services.AddIdentity<ApplicationUser, IdentityRole>(options => 
+builder.Services.AddIdentity<ApplicationUser, IdentityRole>(options =>
 {
     options.Password.RequiredLength = 8;
     options.Password.RequireNonAlphanumeric = false;
@@ -29,6 +30,7 @@ builder.Services.ConfigureApplicationCookie(options =>
     options.LoginPath = "/Account/Login";
     options.AccessDeniedPath = "/Account/AccessDenied";
 });
+builder.Services.AddScoped<ILedgerService, LedgerService>();
 
 var app = builder.Build();
 
@@ -37,6 +39,7 @@ if (app.Environment.IsDevelopment()
 {
     await IdentitySeeder.SeedAsync(app.Services);
 }
+await LedgerSeeder.SeedAsync(app.Services);
 
 // Configure the HTTP request pipeline.
 if (!app.Environment.IsDevelopment())

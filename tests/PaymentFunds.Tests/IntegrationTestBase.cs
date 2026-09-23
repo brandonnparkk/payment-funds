@@ -17,7 +17,8 @@ public abstract class IntegrationTestBase
         if (user is not null)
         {
             request.Headers.Add(TestAuthHandler.UserHeader, user);
-            if (roles is not null) request.Headers.Add(TestAuthHandler.RolesHeader, roles);
+            if (roles is not null)
+                request.Headers.Add(TestAuthHandler.RolesHeader, roles);
         }
         return request;
     }
@@ -50,7 +51,11 @@ public abstract class IntegrationTestBase
     {
         using var scope = Factory.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
-        await db.Database.ExecuteSqlRawAsync("""TRUNCATE "PaymentRequests", "ProcessedStripeEvents", "Payees" RESTART IDENTITY CASCADE""");
+        await db.Database.ExecuteSqlRawAsync(
+            """
+            TRUNCATE "PaymentRequests", "ProcessedStripeEvents", "Payees", "LedgerEntries"
+            RESTART IDENTITY CASCADE
+            """);
     }
 
     [OneTimeTearDown]

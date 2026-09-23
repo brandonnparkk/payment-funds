@@ -35,8 +35,9 @@ public static class IdentitySeeder
         string displayName,
         string role)
     {
-        if (await userManager.FindByEmailAsync(email) is not null) return;
-        
+        if (await userManager.FindByEmailAsync(email) is not null)
+            return;
+
         var password = config[$"SeedUsers:{role}Password"];
         if (string.IsNullOrWhiteSpace(password))
         {

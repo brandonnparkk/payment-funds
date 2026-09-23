@@ -28,8 +28,8 @@ public class PaymentProcessorTests
         var result = await fake.CreatePaymentAsync(
             new PaymentInstruction(10.99m, "usd", "key-abc", "test"),
             CancellationToken.None);
-        
-        Assert.Multiple(() => 
+
+        Assert.Multiple(() =>
         {
             Assert.That(result.Success, Is.True);
             Assert.That(fake.LastInstruction?.IdempotencyKey, Is.EqualTo("key-abc"));

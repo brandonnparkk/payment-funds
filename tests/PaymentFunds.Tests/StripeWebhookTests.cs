@@ -84,7 +84,7 @@ public class StripeWebhookTests : IntegrationTestBase
         var first = await PostAsync(payload, signature);
         var second = await PostAsync(payload, signature);
 
-        Assert.Multiple(() => 
+        Assert.Multiple(() =>
         {
             Assert.That(first.StatusCode, Is.EqualTo(HttpStatusCode.OK));
             Assert.That(second.StatusCode, Is.EqualTo(HttpStatusCode.OK));
