@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using PaymentFunds.Models;
 using PaymentFunds.Data;
+using PaymentFunds.Ledger;
 using Npgsql;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc.Rendering;
@@ -12,10 +13,12 @@ namespace PaymentFunds.Controllers;
 public class PaymentRequestsController : Controller
 {
     private readonly ApplicationDbContext _context;
+    private readonly ILedgerService _ledger;
 
-    public PaymentRequestsController(ApplicationDbContext context)
+    public PaymentRequestsController(ApplicationDbContext context, ILedgerService ledger)
     {
         _context = context;
+        _ledger = ledger;
     }
 
     public async Task<IActionResult> Index(PaymentStatus? status)
@@ -76,7 +79,7 @@ public class PaymentRequestsController : Controller
                 model.AvailablePayees = await VerifiedPayeeOptionsAsync();
                 return View(model);
             }
-            
+
             payee = await _context.Payees.FindAsync(model.PayeeId.Value);
 
             if (payee is null || payee.Status != PayeeStatus.Verified)
@@ -109,9 +112,11 @@ public class PaymentRequestsController : Controller
 
         _context.PaymentRequests.Add(paymentRequest);
 
-        try {
+        try
+        {
             await _context.SaveChangesAsync();
-        } catch (DbUpdateException ex) when (ex.InnerException is PostgresException { SqlState: "23505" })
+        }
+        catch (DbUpdateException ex) when (ex.InnerException is PostgresException { SqlState: "23505" })
         {
             var winner = await _context.PaymentRequests.
                 FirstAsync(r => r.IdempotencyKey == model.IdempotencyKey);
@@ -126,7 +131,8 @@ public class PaymentRequestsController : Controller
         var request = await _context.PaymentRequests
             .Include(r => r.Payee)
             .FirstOrDefaultAsync(r => r.Id == id);
-        if (request == null) return NotFound();
+        if (request == null)
+            return NotFound();
         return View(request);
     }
 
@@ -136,7 +142,8 @@ public class PaymentRequestsController : Controller
     public async Task<IActionResult> Approve(int id)
     {
         var request = await _context.PaymentRequests.FindAsync(id);
-        if (request == null) return NotFound();
+        if (request == null)
+            return NotFound();
         if (request.Status != PaymentStatus.PendingApproval)
         {
             return BadRequest("Only pending requests can be approved");
@@ -149,6 +156,21 @@ public class PaymentRequestsController : Controller
         request.Status = PaymentStatus.Approved;
         request.ApprovedBy = User.Identity!.Name;
         request.ApprovedAt = DateTime.UtcNow;
+
+        if (request.Type == RequestType.Disbursement)
+        {
+            var minor = ILedgerService.ToMinorUnits(request.Amount);
+
+            await _ledger.AddPostingAsync(new LedgerPosting(
+                request.Currency,
+                $"Approved disbursement #{request.Id}",
+                request.Id,
+                [
+                    new LedgerLine("EXPENSE", EntryDirection.Debit, minor),
+                    new LedgerLine("PAYABLE", EntryDirection.Credit, minor)
+                ]));
+        }
+
         await _context.SaveChangesAsync();
 
         return RedirectToAction(nameof(Details), new { id });
@@ -160,7 +182,8 @@ public class PaymentRequestsController : Controller
     public async Task<IActionResult> Reject(int id)
     {
         var request = await _context.PaymentRequests.FindAsync(id);
-        if (request == null) return NotFound();
+        if (request == null)
+            return NotFound();
         if (request.Status != PaymentStatus.PendingApproval)
         {
             return BadRequest("Only pending requests can be rejected");

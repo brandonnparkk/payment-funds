@@ -22,7 +22,7 @@ public class StripePaymentProcessor : IPaymentProcessor
                     Description = instruction.Description
                 },
                 new RequestOptions { IdempotencyKey = instruction.IdempotencyKey }, ct);
-            
+
             return PaymentResult.Succeeded(intent.Id);
         }
         catch (StripeException ex)

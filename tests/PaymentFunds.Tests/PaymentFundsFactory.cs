@@ -45,7 +45,7 @@ public class PaymentFundsFactory : WebApplicationFactory<Program>
 
     public FakePaymentProcessor Processor { get; } =
         new(PaymentResult.Succeeded("pi_fake_123"));
-    
+
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         builder.UseEnvironment("Development");

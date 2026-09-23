@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using PaymentFunds.Data;
 using PaymentFunds.Models;
+using PaymentFunds.Ledger;
 using Stripe;
 
 namespace PaymentFunds.Controllers;
@@ -15,17 +16,20 @@ public class StripeWebhookController : ControllerBase
     private readonly ApplicationDbContext _context;
     private readonly IConfiguration _configuration;
     private readonly ILogger<StripeWebhookController> _logger;
+    private readonly ILedgerService _ledger;
 
     public StripeWebhookController(
         ApplicationDbContext context,
         IConfiguration configuration,
-        ILogger<StripeWebhookController> logger)
-        {
-            _context = context;
-            _configuration = configuration;
-            _logger = logger;
-        }
-    
+        ILogger<StripeWebhookController> logger,
+        ILedgerService ledger)
+    {
+        _context = context;
+        _configuration = configuration;
+        _logger = logger;
+        _ledger = ledger;
+    }
+
     [HttpPost]
     [IgnoreAntiforgeryToken]
     public async Task<IActionResult> Handle()
@@ -35,7 +39,8 @@ public class StripeWebhookController : ControllerBase
         var secret = _configuration["Stripe:WebhookSecret"];
 
         Event stripeEvent;
-        try {
+        try
+        {
             stripeEvent = EventUtility.ConstructEvent(json, signature, secret);
         }
         catch (StripeException ex)
@@ -46,7 +51,7 @@ public class StripeWebhookController : ControllerBase
 
         var alreadyProcessed = await _context.ProcessedStripeEvents
             .AnyAsync(e => e.EventId == stripeEvent.Id);
-        
+
         if (alreadyProcessed)
         {
             _logger.LogInformation("Ignoring duplicate event: {EventId}", stripeEvent.Id);
@@ -65,11 +70,43 @@ public class StripeWebhookController : ControllerBase
                     case "payment_intent.succeeded":
                         request.Status = PaymentStatus.Completed;
                         request.SettledAt = DateTime.UtcNow;
+
+                        var succeededMinor = ILedgerService.ToMinorUnits(request.Amount);
+
+                        await _ledger.AddPostingAsync(new LedgerPosting(
+                            request.Currency,
+                            $"Settled request #{request.Id}",
+                            request.Id,
+                            request.Type == RequestType.Disbursement
+                                ? [
+                                    new LedgerLine("PAYABLE", EntryDirection.Debit, succeededMinor),
+                                    new LedgerLine("CASH", EntryDirection.Credit, succeededMinor)
+                                ]
+                                : [
+                                    new LedgerLine("CASH", EntryDirection.Debit, succeededMinor),
+                                    new LedgerLine("REVENUE", EntryDirection.Credit, succeededMinor)
+                                ]));
+
                         break;
 
                     case "payment_intent.payment_failed":
                         request.Status = PaymentStatus.Failed;
                         request.SettledAt = DateTime.UtcNow;
+
+                        if (request.Type == RequestType.Disbursement)
+                        {
+                            var failedMinor = ILedgerService.ToMinorUnits(request.Amount);
+
+                            await _ledger.AddPostingAsync(new LedgerPosting(
+                                request.Currency,
+                                $"Reversed failed disbursement #{request.Id}",
+                                request.Id,
+                                [
+                                    new LedgerLine("PAYABLE", EntryDirection.Debit, failedMinor),
+                                    new LedgerLine("EXPENSE", EntryDirection.Credit, failedMinor)
+                                ]));
+                        }
+
                         break;
 
                     default:

@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using PaymentFunds.Data;
+using PaymentFunds.Ledger;
 using PaymentFunds.Models;
 using PaymentFunds.Payments;
 
@@ -16,105 +17,142 @@ public class PaymentProcessingWorker : BackgroundService
         IServiceProvider services,
         IPaymentProcessor paymentProcessor,
         ILogger<PaymentProcessingWorker> logger)
+    {
+        _services = services;
+        _paymentProcessor = paymentProcessor;
+        _logger = logger;
+    }
+
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        while (!stoppingToken.IsCancellationRequested)
         {
-            _services = services;
-            _paymentProcessor = paymentProcessor;
-            _logger = logger;
+            try
+            {
+                await ProcessApprovedRequestsAsync(stoppingToken);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Unhandled error in payment processing loop");
+            }
+            await Task.Delay(PollInterval, stoppingToken);
+        }
+    }
+
+    private async Task ProcessApprovedRequestsAsync(CancellationToken ct)
+    {
+        using var scope = _services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+
+        var ids = await db.PaymentRequests
+            .Where(pr => pr.Status == PaymentStatus.Approved)
+            .OrderBy(pr => pr.ApprovedAt)
+            .Select(pr => pr.Id)
+            .Take(10)
+            .ToListAsync(ct);
+
+        foreach (var id in ids)
+        {
+            var claimed = await db.PaymentRequests
+                .Where(pr => pr.Id == id && pr.Status == PaymentStatus.Approved)
+                .ExecuteUpdateAsync(
+                    set => set.SetProperty(pr => pr.Status, PaymentStatus.Processing), ct);
+
+            if (claimed == 0)
+            {
+                continue;
+            }
+
+            await ProcessOneAsync(id, ct);
         }
 
-        protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    }
+
+    private async Task ProcessOneAsync(int id, CancellationToken ct)
+    {
+        using var scope = _services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+        var ledger = scope.ServiceProvider.GetRequiredService<ILedgerService>();
+
+        var request = await db.PaymentRequests
+            .Include(pr => pr.Payee)
+            .AsTracking()
+            .FirstAsync(pr => pr.Id == id, ct);
+
+        if (request.Type == RequestType.Disbursement
+            && request.Payee?.Status != PayeeStatus.Verified)
         {
-            while(!stoppingToken.IsCancellationRequested)
-            {
-                try {
-                    await ProcessApprovedRequestsAsync(stoppingToken);
-                } catch (Exception ex) {
-                    _logger.LogError(ex, "Unhandled error in payment processing loop");
-                }
-                await Task.Delay(PollInterval, stoppingToken);
-            }
-        }
+            request.Status = PaymentStatus.Failed;
+            request.SettledAt = DateTime.UtcNow;
 
-        private async Task ProcessApprovedRequestsAsync(CancellationToken ct)
-        {
-            using var scope = _services.CreateScope();
-            var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
-
-            var ids = await db.PaymentRequests
-                .Where(pr => pr.Status == PaymentStatus.Approved)
-                .OrderBy(pr => pr.ApprovedAt)
-                .Select(pr => pr.Id)
-                .Take(10)
-                .ToListAsync(ct);
-
-            foreach (var id in ids)
-            {
-                var claimed = await db.PaymentRequests
-                    .Where(pr => pr.Id == id && pr.Status == PaymentStatus.Approved)
-                    .ExecuteUpdateAsync(
-                        set => set.SetProperty(pr => pr.Status, PaymentStatus.Processing), ct);
-
-                    if (claimed == 0)
-                    {
-                        continue;
-                    }
-
-                    await ProcessOneAsync(id, ct);
-            }
-
-        }
-
-        private async Task ProcessOneAsync(int id, CancellationToken ct)
-        {
-            using var scope = _services.CreateScope();
-            var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
-
-            var request = await db.PaymentRequests
-                .Include(pr => pr.Payee)
-                .AsTracking()
-                .FirstAsync(pr => pr.Id == id, ct);
-
-            if (request.Type == RequestType.Disbursement
-                && request.Payee?.Status != PayeeStatus.Verified)
-            {
-                request.Status = PaymentStatus.Failed;
-                await db.SaveChangesAsync(ct);
-
-                _logger.LogWarning(
-                    "Refusing disbursement {RequestId}: payee is {Status}",
-                    request.Id, request.Payee?.Status.ToString() ?? "missing");
-                return;
-            }
-            var result = await _paymentProcessor.CreatePaymentAsync(
-                new PaymentInstruction(
-                    request.Amount,
-                    request.Currency,
-                    request.IdempotencyKey,
-                    $"Payment for request {request.Id}"
-                ),
-                ct
-                );
-            
-            if (result.Success)
-            {
-                request.ProviderReference = result.ProviderReference;
-                request.ProcessedAt = DateTime.UtcNow;
-
-                _logger.LogInformation(
-                    "Created payment {Reference} for request {RequestId}",
-                    result.ProviderReference,
-                    request.Id);
-            }
-            else
-            {
-                request.Status = PaymentStatus.Failed;
-                _logger.LogError(
-                    "Payment failed for request {RequestId}: {Reason}",
-                    request.Id,
-                    result.FailureReason);
-            }
-
+            await AddReversalAsync(ledger, request, "payee not verified", ct);
             await db.SaveChangesAsync(ct);
+
+            _logger.LogWarning(
+                "Refusing disbursement {RequestId}: payee is {Status}",
+                request.Id, request.Payee?.Status.ToString() ?? "missing");
+            return;
         }
-    
+        var result = await _paymentProcessor.CreatePaymentAsync(
+            new PaymentInstruction(
+                request.Amount,
+                request.Currency,
+                request.IdempotencyKey,
+                $"Payment for request {request.Id}"
+            ),
+            ct
+            );
+
+        if (result.Success)
+        {
+            request.ProviderReference = result.ProviderReference;
+            request.ProcessedAt = DateTime.UtcNow;
+
+            _logger.LogInformation(
+                "Created payment {Reference} for request {RequestId}",
+                result.ProviderReference,
+                request.Id);
+        }
+        else
+        {
+            request.Status = PaymentStatus.Failed;
+            request.SettledAt = DateTime.UtcNow;
+
+            await AddReversalAsync(ledger, request, "provider rejected the payment", ct);
+
+            _logger.LogError(
+                "Payment failed for request {RequestId}: {Reason}",
+                request.Id,
+                result.FailureReason);
+        }
+
+        await db.SaveChangesAsync(ct);
+    }
+
+    /// <summary>
+    /// Releases the payable raised at approval. Only disbursements create one,
+    /// so a failed collection posts nothing.
+    /// </summary>
+    private static async Task AddReversalAsync(
+        ILedgerService ledger,
+        PaymentRequest request,
+        string reason,
+        CancellationToken ct)
+    {
+        if (request.Type != RequestType.Disbursement)
+        {
+            return;
+        }
+
+        var minor = ILedgerService.ToMinorUnits(request.Amount);
+
+        await ledger.AddPostingAsync(new LedgerPosting(
+            request.Currency,
+            $"Reversed disbursement #{request.Id}: {reason}",
+            request.Id,
+            [
+                new LedgerLine("PAYABLE", EntryDirection.Debit, minor),
+                new LedgerLine("EXPENSE", EntryDirection.Credit, minor)
+            ]), ct);
+    }
 }
