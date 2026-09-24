@@ -260,7 +260,62 @@ The handler reads `Request.Body` as a stream rather than binding to a model. Str
 
 ## Getting started
 
-### Prerequisites
+There are two ways to run this. Pick based on what you want to do.
+
+| | [Docker Compose](#run-it-with-docker-compose) | [Local development](#run-it-for-development) |
+|---|---|---|
+| Time to first page | About two minutes | About fifteen |
+| Needs | Docker | .NET 10 SDK, minikube, Stripe CLI |
+| Good for | Seeing the app, reviewing it | Changing code, webhook work |
+| Webhook settlement | No, requests stay in `Processing` | Yes |
+
+Compose is the honest "clone and run" path. It stops short of webhook delivery,
+because Stripe has to reach a public URL and that needs the Stripe CLI tunnel.
+
+---
+
+### Run it with Docker Compose
+
+```bash
+cp .env.example .env
+$EDITOR .env                 # fill in the three passwords
+docker compose up --build
+```
+
+Then <http://localhost:8080>. Sign in with the seeded accounts:
+
+| Role | Email |
+|---|---|
+| Requester | `requester@paymentfunds.local` |
+| Approver | `approver@paymentfunds.local` |
+
+Passwords are whatever you set in `.env`. Nothing is committed, so compose refuses
+to start until that file exists and is filled in. Stripe keys are optional: leave
+them blank and the app runs normally until something tries to call the provider.
+
+To try the flow, create a request as the requester, then sign out and approve it as
+the approver. It will reach `Processing` and stop there, because settlement arrives
+by webhook. For the full lifecycle use the development path below.
+
+| Command | Effect |
+|---|---|
+| `docker compose up --build` | Start, rebuilding the image |
+| `docker compose logs -f app` | Follow the app's logs |
+| `docker compose down` | Stop, keeping the database |
+| `docker compose down -v` | Stop and delete the database volume |
+
+The app container migrates the database on startup (`RunMigrationsAtStartup=true`)
+and seeds the roles, demo users, and chart of accounts. All three are idempotent, so
+restarting is safe.
+
+Postgres is published on host port **5433**, not 5432, so it does not collide with a
+`kubectl port-forward` from the development path.
+
+---
+
+### Run it for development
+
+#### Prerequisites
 
 - [.NET 10 SDK](https://dotnet.microsoft.com/download)
 - [minikube](https://minikube.sigs.k8s.io/docs/start) and `kubectl`
@@ -274,7 +329,7 @@ All `dotnet` commands are run from the repository root and target the app with
 You will want four terminals: one for the port-forward, one for `stripe listen`,
 one for the app, and one to work in.
 
-### 1. Start PostgreSQL in the cluster
+#### 1. Start PostgreSQL in the cluster
 
 ```bash
 minikube start
@@ -289,7 +344,7 @@ in its own terminal; it does not survive a cluster restart.
 kubectl port-forward svc/postgres 5432:5432
 ```
 
-### 2. Configure secrets
+#### 2. Configure secrets
 
 ```bash
 dotnet user-secrets set "Stripe:SecretKey" "sk_test_..." --project src/PaymentFunds
@@ -315,7 +370,7 @@ dotnet user-secrets set "ConnectionStrings:TestDatabase" \
   --project tests/PaymentFunds.Tests
 ```
 
-### 3. Apply migrations
+#### 3. Apply migrations
 
 ```bash
 ASPNETCORE_ENVIRONMENT=Development dotnet ef database update --project src/PaymentFunds
@@ -328,10 +383,10 @@ this recreates everything.
 Check what you have with:
 
 ```bash
-psql -h localhost -p 5432 -U brandon -d PaymentFunds -c '\dt'
+psql -h localhost -p 5432 -U <user> -d PaymentFunds -c '\dt'
 ```
 
-### 4. Start the webhook listener
+#### 4. Start the webhook listener
 
 In a separate terminal:
 
@@ -350,7 +405,7 @@ dotnet user-secrets set "Stripe:WebhookSecret" "whsec_..." --project src/Payment
 > running app keeps the old value. A stale signing secret shows up as a 400 on every
 > forwarded event.
 
-### 5. Run
+#### 5. Run
 
 ```bash
 dotnet run --project src/PaymentFunds
@@ -361,7 +416,7 @@ Open <http://localhost:5245/PaymentRequests>.
 Sign in at <http://localhost:5245/Account/Login> with the seeded accounts and the
 passwords from step 2.
 
-### 6. Verify end to end
+#### 6. Verify end to end
 
 The flow needs two different people, since an approver cannot approve their own
 request:
@@ -377,6 +432,51 @@ Then watch for:
 
 If you create and approve as the same user you will get an access denied page. That is
 the separation-of-duties check working, not a bug.
+
+---
+
+### Health endpoints
+
+Both paths expose two probes, unauthenticated so an orchestrator can reach them.
+
+| Endpoint | Checks | Fails when |
+|---|---|---|
+| `/health/live` | Nothing | The process is wedged or not serving |
+| `/health/ready` | `DbContext` connectivity | The database is unreachable |
+
+```bash
+curl -s localhost:8080/health/live     # compose
+curl -s localhost:5245/health/ready    # dotnet run
+```
+
+Liveness deliberately runs no checks. A failing liveness probe makes Kubernetes
+restart the pod, so if it tested the database, a brief Postgres outage would turn
+into a cluster-wide restart loop. Readiness failing only pulls the pod out of the
+Service, which is the correct response to a dependency being down: stop sending it
+traffic, don't kill it.
+
+### Container image
+
+The image is built by [`.github/workflows/publish.yml`](.github/workflows/publish.yml)
+on every push to `main`, after the test suite passes, and pushed to GitHub Container
+Registry as `linux/arm64`.
+
+```bash
+docker pull ghcr.io/brandonnparkk/paymentfunds:latest
+```
+
+Tagged with the full commit SHA as well as `latest`. Deployments pin the SHA, because
+`latest` gives you no way to know what is running or to roll back to a known state.
+
+To build it yourself:
+
+```bash
+docker build -t paymentfunds:local .
+```
+
+Running the image with `--migrate-only` applies migrations and exits, which is how the
+Kubernetes migration Job works. Compose instead sets `RunMigrationsAtStartup=true`,
+because with one replica there is no migration race to worry about.
 
 ---
 

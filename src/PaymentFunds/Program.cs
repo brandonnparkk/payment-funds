@@ -1,5 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.Diagnostics.HealthChecks;
+using Microsoft.AspNetCore.HttpOverrides;
 using PaymentFunds.Models;
 using PaymentFunds.Data;
 using PaymentFunds.Workers;
@@ -31,17 +33,49 @@ builder.Services.ConfigureApplicationCookie(options =>
     options.AccessDeniedPath = "/Account/AccessDenied";
 });
 builder.Services.AddScoped<ILedgerService, LedgerService>();
+builder.Services.AddHealthChecks()
+    .AddDbContextCheck<ApplicationDbContext>("database", tags: ["ready"]);
+builder.Services.Configure<ForwardedHeadersOptions>(options =>
+{
+    options.ForwardedHeaders =
+        ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+
+    // The tunnel's pod IP is not knowable ahead of time, so the default
+    // "only trust localhost" list would drop every forwarded header.
+    options.KnownNetworks.Clear();
+    options.KnownProxies.Clear();
+});
 
 var app = builder.Build();
 
-if (app.Environment.IsDevelopment()
-    && app.Configuration.GetValue("SeedIdentity", true))
+var migrateOnly = args.Contains("--migrate-only");
+
+if (migrateOnly || app.Configuration.GetValue("RunMigrationsAtStartup", false))
+{
+    using var scope = app.Services.CreateScope();
+    var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+    await db.Database.MigrateAsync();
+}
+
+if (app.Configuration.GetValue("SeedIdentity", app.Environment.IsDevelopment()))
 {
     await IdentitySeeder.SeedAsync(app.Services);
 }
+
 await LedgerSeeder.SeedAsync(app.Services);
 
+if (migrateOnly)
+{
+    return;
+}
+
 // Configure the HTTP request pipeline.
+
+// Must run before anything that reads the scheme. HSTS and HttpsRedirection both
+// check Request.IsHttps, and behind the tunnel that is only true once the
+// X-Forwarded-Proto header has been applied.
+app.UseForwardedHeaders();
+
 if (!app.Environment.IsDevelopment())
 {
     app.UseExceptionHandler("/Home/Error");
@@ -62,6 +96,15 @@ app.MapControllerRoute(
     pattern: "{controller=Home}/{action=Index}/{id?}")
     .WithStaticAssets();
 
+app.MapHealthChecks("/health/live", new HealthCheckOptions
+{
+    Predicate = _ => false
+}).AllowAnonymous();
+
+app.MapHealthChecks("/health/ready", new HealthCheckOptions
+{
+    Predicate = check => check.Tags.Contains("ready")
+}).AllowAnonymous();
 
 app.Run();
 

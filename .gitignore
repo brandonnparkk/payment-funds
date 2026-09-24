@@ -12,9 +12,13 @@ obj/
 appsettings.Development.json
 appsettings.json
 
+# docker compose credentials. Use .env.example as the template.
+.env
+
 # Decrypted sops output, should never be committed.
 *.dec.yaml
 *.decrypted.yaml
 
 # Personal planning notes, intentionally not published.
 ROADMAP.md
+

@@ -1,0 +1,35 @@
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: PaymentFunds
+      POSTGRES_USER: paymentfunds
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?copy .env.example to .env and fill it in}
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U paymentfunds -d PaymentFunds"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  app:
+    build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      RunMigrationsAtStartup: "true"
+      ConnectionStrings__DefaultConnection: "Host=postgres;Port=5432;Database=PaymentFunds;Username=paymentfunds;Password=${POSTGRES_PASSWORD}"
+      SeedUsers__RequesterPassword: ${SEED_REQUESTER_PASSWORD:?see .env.example}
+      SeedUsers__ApproverPassword: ${SEED_APPROVER_PASSWORD:?see .env.example}
+      Stripe__SecretKey: "${STRIPE_SECRET_KEY:-sk_test_placeholder}"
+      Stripe__WebhookSecret: "${STRIPE_WEBHOOK_SECRET:-whsec_placeholder}"
+    ports:
+      - "8080:8080"
+
+volumes:
+  pgdata:
