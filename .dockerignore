@@ -1,0 +1,17 @@
+**/bin/
+**/obj/
+**/.vs/
+**/.vscode/
+.git/
+.gitignore
+tests/
+docs/
+*.md
+docker-compose.yml
+**/appsettings.Development.json
+.github/
+k8s/
+
+# Local credentials. These reach the app as environment variables at runtime
+# and must never be baked into an image layer.
+.env
