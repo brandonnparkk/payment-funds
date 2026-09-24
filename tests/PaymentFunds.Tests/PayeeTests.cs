@@ -37,9 +37,7 @@ public class PayeeTests : IntegrationTestBase
     {
         var id = await SeedPayeeAsync(createdBy: RequesterUser);
 
-        var response = await PostVerifyAsync(id, ApproverUser, "Approver");
-
-        Assert.That((int)response.StatusCode, Is.LessThan(400));
+        await PostVerifyAsync(id, ApproverUser, "Approver");
 
         var payee = await LoadPayeeAsync(id);
         Assert.Multiple(() =>

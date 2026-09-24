@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using PaymentFunds.Models;
 using PaymentFunds.Data;
 using PaymentFunds.Ledger;
+using PaymentFunds.Extensions;
 using Npgsql;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc.Rendering;
@@ -153,13 +154,19 @@ public class PaymentRequestsController : Controller
             return Forbid();
         }
 
-        request.Status = PaymentStatus.Approved;
-        request.ApprovedBy = User.Identity!.Name;
-        request.ApprovedAt = DateTime.UtcNow;
-
         if (request.Type == RequestType.Disbursement)
         {
             var minor = ILedgerService.ToMinorUnits(request.Amount);
+            var available = await _ledger.AvailableFundsMinorAsync(request.Currency);
+
+            if (minor > available)
+            {
+                TempData["Error"] =
+                    $"Insufficient funds. Available {available.ToMoneyMinor(request.Currency)}, " +
+                    $"requested {request.Amount.ToMoney(request.Currency)}.";
+
+                return RedirectToAction(nameof(Details), new { id });
+            }
 
             await _ledger.AddPostingAsync(new LedgerPosting(
                 request.Currency,
@@ -170,6 +177,10 @@ public class PaymentRequestsController : Controller
                     new LedgerLine("PAYABLE", EntryDirection.Credit, minor)
                 ]));
         }
+
+        request.Status = PaymentStatus.Approved;
+        request.ApprovedBy = User.Identity!.Name;
+        request.ApprovedAt = DateTime.UtcNow;
 
         await _context.SaveChangesAsync();
 
