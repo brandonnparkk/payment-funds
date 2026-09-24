@@ -15,6 +15,7 @@ Built to work through the patterns real payment systems depend on: explicit stat
 - [Architecture](#architecture)
 - [Authentication and roles](#authentication-and-roles)
 - [Payees and disbursements](#payees-and-disbursements)
+- [The ledger](#the-ledger)
 - [Key design decisions](#key-design-decisions)
 - [Getting started](#getting-started)
 - [Running the tests](#running-the-tests)
@@ -35,6 +36,8 @@ A payment request moves through an explicit state machine. Nothing skips a step,
 2. **Approve.** A user in the `Approver` role approves or rejects, and cannot act on their own request. Both actions are recorded against the authenticated user with a timestamp. Only `PendingApproval` requests can be acted on.
 3. **Process.** A background worker polls for `Approved` rows every five seconds, claims one atomically, re-checks that the payee is still verified, and calls Stripe. The request's idempotency key is forwarded to Stripe so a retry cannot double-charge.
 4. **Settle.** Stripe calls back over a webhook when the payment resolves. The signature is verified, the event is deduplicated, and the request moves to `Completed` or `Failed`.
+
+Approval and settlement each write balanced ledger entries in the same transaction as the status change, so the financial record and the operational record cannot drift apart. See [The ledger](#the-ledger).
 
 The web request never waits on Stripe. Approval returns immediately and the payment happens out of band.
 
@@ -135,6 +138,81 @@ Same reasoning as card data. Holding raw bank credentials creates compliance obl
 A payee verified when a request was raised can be suspended before the worker pays it, and requests can sit awaiting approval for a while. Checking once at submission and acting later means acting on stale information, which is a time-of-check to time-of-use gap.
 
 So the guard runs in both places: `PaymentRequestsController.Create` refuses to create a disbursement to an unverified payee, and `PaymentProcessingWorker` re-reads the payee immediately before calling Stripe and fails the request if the status has changed. The last line of defence sits closest to the money.
+
+---
+
+## The ledger
+
+Every money movement is recorded twice, as a debit on one account and a credit on
+another, and the two always cancel. Money cannot appear or vanish, only move. Balances
+are derived by summing an append-only history rather than tracked in a mutable column.
+
+### Accounts
+
+Four account codes, seeded per currency (`usd`, `eur`, `gbp`), plus an opening-balance
+account used to fund the platform:
+
+| Code | Type | Holds |
+|---|---|---|
+| `CASH` | Asset | Money the platform holds |
+| `PAYABLE` | Liability | Money owed to payees but not yet sent |
+| `EXPENSE` | Expense | Cost of disbursements |
+| `REVENUE` | Revenue | Money collected |
+| `OPENING` | Equity | Counterpart for platform funding |
+
+An account holds exactly one currency. Adding dollars to euros is meaningless, so a
+posting cannot span currencies.
+
+### What each state transition posts
+
+| Event | Debit | Credit |
+|---|---|---|
+| Disbursement approved | `EXPENSE` | `PAYABLE` |
+| Disbursement settled | `PAYABLE` | `CASH` |
+| Disbursement failed after approval | `PAYABLE` | `EXPENSE` |
+| Collection settled | `CASH` | `REVENUE` |
+
+Approval and settlement are separate postings because owing money and paying it are
+different facts on different dates. The two-step state machine already modelled that
+before the ledger existed; the ledger records its financial meaning.
+
+### Amounts are integers, and always positive
+
+`LedgerEntry.AmountMinor` is a `long` holding minor units. Summing integers is exact;
+summing decimals invites rounding arguments. `PaymentRequest.Amount` stays `decimal`
+for display, and conversion happens at the boundary.
+
+There are no negative entries. `Direction` carries the sign, which is what makes "do
+debits equal credits?" a checkable question rather than a convention. A sign error
+becomes visible instead of silently cancelling out. A `CK_LedgerEntry_PositiveAmount`
+check constraint enforces it at the database.
+
+### Postings commit with the state change they describe
+
+`ILedgerService.AddPostingAsync` deliberately does **not** call `SaveChangesAsync`. It
+stages entries on the current `DbContext` and the caller saves, so the status change
+and the ledger entries land in one transaction.
+
+Saving separately would mean a crash could leave a request marked `Approved` with no
+obligation recorded, and the ledger would quietly disagree with operational data. Same
+reasoning as the database-as-queue decision: one system, one transaction, nothing to
+reconcile.
+
+### Failures reverse, they never edit
+
+A failed disbursement posts a new, opposite pair rather than editing or deleting the
+approval entries. The history then reads "we owed this, then we didn't," which is what
+happened. An append-only ledger is trustworthy precisely because nothing in it can be
+changed after the fact.
+
+### Insufficient funds is a real state
+
+Available funds is **cash less outstanding payables**, not just cash. An approved but
+unsettled disbursement has already committed that money even though it hasn't left
+yet, so ignoring payables would allow approving the same pound twice.
+
+Approval is refused when the amount exceeds available funds, and the check runs before
+any mutation, so a refused approval leaves no trace.
 
 ---
 
@@ -352,9 +430,22 @@ payload bytes.
 
 | Fixture | Asserts |
 |---|---|
-| `StripeWebhookTests` | Forged signatures are rejected, valid events transition the request, duplicate event ids are recorded once |
+| `StripeWebhookTests` | Forged signatures rejected, valid events transition the request, duplicate event ids recorded once, settlement posts the right ledger entries for both collections and disbursements |
 | `PaymentRequestAuthTests` | Anonymous access refused, requesters cannot approve, approvers cannot approve their own request, approvers can approve others', already-approved requests cannot be re-approved |
 | `PaymentRequestCreateTests` | Resubmitting the same form creates one row and derives the requester from identity; two separate forms create two rows |
+| `PayeeTests` | Only approvers verify, never their own payee, tax form required, disbursements refused to unverified or suspended payees |
+| `LedgerTests` | Every transaction balances, unbalanced postings rejected, approval posts and reserves funds, approval refused when short, failures reverse, currencies isolated |
+
+`LedgerTests.Every_transaction_in_the_ledger_balances_to_zero` is the one that matters
+most. It asserts across the **whole table** rather than one scenario, so any future code
+path that posts an unbalanced set fails it, including paths that don't exist yet. That
+matters because Postgres cannot express "sum per `TransactionId` equals zero" as a
+check constraint.
+
+Assertions are on database state rather than status codes. `WebApplicationFactory`'s
+client follows redirects by default, so a refused action that returns 302 lands on a
+200 and would sail past a `StatusCode < 400` assertion. Status codes are only asserted
+where the code itself is the point, as with 401, 403, and 400.
 
 > The port-forward must be running or every integration test fails on connection.
 
@@ -367,12 +458,18 @@ src/PaymentFunds/
   Controllers/
     AccountController.cs           Login, logout, access denied
     HomeController.cs              Dashboard
+    LedgerController.cs            Balances, entries, platform funding
     PayeesController.cs            List, create, verify, suspend
     PaymentRequestsController.cs   Create, approve, reject, list, details
     StripeWebhookController.cs     POST /api/stripe/webhook
   Data/
-    ApplicationDbContext.cs        IdentityDbContext, DbSets, unique indexes
+    ApplicationDbContext.cs        IdentityDbContext, DbSets, indexes, constraints
     IdentitySeeder.cs              Roles and development accounts
+    LedgerSeeder.cs                System accounts, one set per currency
+  Ledger/
+    ILedgerService.cs              Posting and balance contract
+    LedgerService.cs               Validation, staging, balance queries
+    LedgerPosting.cs               LedgerPosting and LedgerLine records
   Extensions/
     DisplayExtensions.cs           Money formatting and status badge classes
   Models/
@@ -381,7 +478,11 @@ src/PaymentFunds/
     RequestType.cs                 Collection or Disbursement
     Payee.cs                       Who receives the money
     PayeeStatus.cs                 Unverified, Verified, Suspended
-    ProcessedStripeEvent.cs        Webhook deduplication ledger
+    ProcessedStripeEvent.cs        Webhook deduplication record
+    LedgerAccount.cs               A bucket money sits in
+    LedgerEntry.cs                 Money moving into or out of one account
+    LedgerAccountType.cs           Asset, Liability, Expense, Revenue, Equity
+    EntryDirection.cs              Debit or Credit
     ApplicationUser.cs             IdentityUser with DisplayName
     CreatePaymentRequestViewModel.cs
     CreatePayeeViewModel.cs
@@ -405,6 +506,7 @@ tests/PaymentFunds.Tests/
   PaymentRequestAuthTests.cs       Roles and separation of duties
   PaymentRequestCreateTests.cs     Idempotency through the form
   PayeeTests.cs                    Verification rules and the disbursement gate
+  LedgerTests.cs                   Balance invariant, postings, funds guard, reversal
   PaymentProcessorTests.cs         Fake processor unit tests
 
 k8s/                               PostgreSQL manifests (sops-encrypted secret)
@@ -458,6 +560,38 @@ The foreign key from `PaymentRequest` uses `DeleteBehavior.Restrict`. Deleting a
 | `EventType` | string | For example `payment_intent.succeeded` |
 | `ProcessedAt` | DateTime | |
 
+### LedgerAccount
+
+| Column | Type | Notes |
+|---|---|---|
+| `Id` | int | Primary key |
+| `Code` | string | `CASH`, `PAYABLE`, `EXPENSE`, `REVENUE`, `OPENING` |
+| `Name` | string | Display name |
+| `Type` | enum | `Asset`, `Liability`, `Expense`, `Revenue`, `Equity` |
+| `Currency` | string | Unique together with `Code`. One currency per account |
+
+### LedgerEntry
+
+| Column | Type | Notes |
+|---|---|---|
+| `Id` | long | Primary key |
+| `TransactionId` | Guid | Groups the entries posted together; indexed |
+| `AccountId` | int | Restrict on delete |
+| `Direction` | enum | `Debit` or `Credit` |
+| `AmountMinor` | long | Minor units, always positive. `CK_LedgerEntry_PositiveAmount` |
+| `Currency` | string | Matches the account's currency |
+| `PaymentRequestId` | int? | Null for platform funding; indexed; restrict on delete |
+| `Description` | string | Human-readable reason |
+| `CreatedAt` | DateTime | |
+
+Entries are append-only. Nothing updates or deletes them; corrections are posted as
+reversing entries. Both foreign keys are `Restrict`, so an account or request with
+entries cannot be deleted.
+
+The balanced-per-transaction invariant is enforced in `LedgerService` and asserted
+across the whole table by `LedgerTests`, because Postgres cannot express it as a simple
+check constraint.
+
 ### Identity
 
 The standard ASP.NET Core Identity tables (`AspNetUsers`, `AspNetRoles`,
@@ -476,9 +610,11 @@ Documented deliberately rather than hidden.
 
 - **Even a disbursement settles through a `PaymentIntent`.** The domain now models disbursement correctly, but the Stripe call underneath still creates a charge. Real payouts use `Payout` or `Transfer` with Connect, which requires recipient onboarding and compliance handling that test mode doesn't provide.
 - **Rows can strand in `Processing`.** The worker catches `StripeException` but not other failures. A crash after claiming a row leaves it claimed with nothing to retry it. There is no attempt counter, backoff, dead letter, or lease expiry. A sweeper is planned.
-- **No ledger or balance.** Nothing tracks whether funds are available, so insufficient funds is not a reachable state.
+- **No per-payee subledger.** One `PAYABLE` account per currency holds every obligation. Per-payee balances are derivable by joining through `LedgerEntry.PaymentRequestId`, but there is no dedicated account per payee.
+- **No currency conversion.** Accounts are per-currency and a posting cannot span currencies, which is correct but means cross-currency movement is impossible rather than handled.
+- **No reconciliation against Stripe.** Nothing compares the ledger to the provider's record of the same payments, so undetected drift is possible.
 - **No approval thresholds.** Every request needs exactly one approver regardless of amount. Dual approval over a limit is planned.
-- **Coverage is uneven.** The webhook boundary, the authorization rules, payee verification, and form idempotency are covered. The worker's polling, claiming, and payee re-check are not, because the factory removes hosted services during tests.
+- **Coverage is uneven.** The webhook boundary, the authorization rules, payee verification, form idempotency, and the ledger are covered. The worker's polling, claiming, payee re-check, and reversal are not, because the factory removes hosted services during tests. `LedgerTests` reproduces the worker's reversal rather than invoking it, so a change to the worker alone would not fail a test.
 - **`StripeConfiguration.ApiKey` is a global static.** `StripePaymentProcessor` reads it implicitly rather than receiving injected configuration.
 - **No browser tests.** Coverage is HTTP-level through `WebApplicationFactory`. Playwright is planned.
 - **The app is not containerized.** Only PostgreSQL runs in Kubernetes. The app runs on the host and reaches the database through `kubectl port-forward`.
@@ -498,8 +634,8 @@ Documented deliberately rather than hidden.
 | 6. Test harness and the Stripe seam | Complete |
 | 7. Identity and roles | Complete |
 | 8. Payees and disbursement modeling | Complete |
-| 8.5. Interface polish | In progress |
-| 9. Double-entry ledger | Next |
+| 8.5. Interface polish | Complete |
+| 9. Double-entry ledger | Complete |
 | 10. Containerization, observability, Kubernetes deployment | Planned |
 
 Deferred: approval policy engine (thresholds, dual approval) and worker resilience

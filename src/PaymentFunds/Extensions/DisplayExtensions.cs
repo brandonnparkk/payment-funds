@@ -20,6 +20,9 @@ public static class DisplayExtensions
             : $"{amount:N2} {currency?.ToUpperInvariant()}";
     }
 
+    public static string ToMoneyMinor(this long amountMinor, string? currency) =>
+        (amountMinor / 100m).ToMoney(currency);
+
     public static string BadgeClass(this PaymentStatus status) => status switch
     {
         PaymentStatus.Created => "text-bg-secondary",

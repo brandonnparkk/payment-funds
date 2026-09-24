@@ -37,6 +37,11 @@
     <a asp-action="Index" class="btn btn-outline-secondary btn-sm">Back to list</a>
 </div>
 
+@if (TempData["Error"] is string error)
+{
+    <div class="alert alert-danger">@error</div>
+}
+
 <div class="row g-4">
     <div class="col-lg-5">
         <div class="card h-100">

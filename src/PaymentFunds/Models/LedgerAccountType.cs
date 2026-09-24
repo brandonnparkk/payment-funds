@@ -5,5 +5,6 @@ public enum LedgerAccountType
     Asset,
     Liability,
     Expense,
-    Revenue
+    Revenue,
+    Equity
 }

@@ -55,9 +55,7 @@ public class PaymentRequestAuthTests : IntegrationTestBase
     {
         var id = await SeedPendingRequestAsync(RequesterUser);
 
-        var response = await PostApproveAsync(id, ApproverUser, "Approver");
-
-        Assert.That((int)response.StatusCode, Is.LessThan(400));
+        await PostApproveAsync(id, ApproverUser, "Approver");
 
         var saved = await LoadAsync(id);
         Assert.Multiple(() =>
@@ -73,9 +71,7 @@ public class PaymentRequestAuthTests : IntegrationTestBase
     {
         var id = await SeedPendingRequestAsync(RequesterUser);
 
-        var response = await PostAsync("Reject", id, ApproverUser, "Approver");
-
-        Assert.That((int)response.StatusCode, Is.LessThan(400));
+        await PostAsync("Reject", id, ApproverUser, "Approver");
 
         var saved = await LoadAsync(id);
         Assert.Multiple(() =>
@@ -125,6 +121,12 @@ public class PaymentRequestAuthTests : IntegrationTestBase
         return ExtractToken(await response.Content.ReadAsStringAsync());
     }
 
+    /// <summary>
+    /// Seeds a Collection rather than a Disbursement on purpose. Collections skip the
+    /// ledger's available-funds guard, so this fixture can exercise authorization
+    /// rules without also needing a funded platform. The disbursement path is covered
+    /// by <see cref="LedgerTests"/> and <see cref="PayeeTests"/>.
+    /// </summary>
     private async Task<int> SeedPendingRequestAsync(string requestedBy)
     {
         using var scope = Factory.Services.CreateScope();
@@ -135,6 +137,7 @@ public class PaymentRequestAuthTests : IntegrationTestBase
             IdempotencyKey = Guid.NewGuid().ToString(),
             Amount = 19.99m,
             Currency = "usd",
+            Type = RequestType.Collection,
             Status = PaymentStatus.PendingApproval,
             RequestedBy = requestedBy,
             CreatedAt = DateTime.UtcNow

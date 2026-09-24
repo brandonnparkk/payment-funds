@@ -71,4 +71,34 @@ public class LedgerService : ILedgerService
             });
         }
     }
+
+    public async Task<long> BalanceMinorAsync(string accountCode, string currency, CancellationToken ct = default)
+    {
+        var account = await _context.LedgerAccounts
+            .FirstOrDefaultAsync(a => a.Code == accountCode && a.Currency == currency, ct)
+            ?? throw new InvalidOperationException($"No {currency} account with {accountCode}.");
+
+        var debits = await _context.LedgerEntries
+            .Where(e => e.AccountId == account.Id && e.Direction == EntryDirection.Debit)
+            .SumAsync(e => (long?)e.AmountMinor, ct) ?? 0;
+
+        var credits = await _context.LedgerEntries
+            .Where(e => e.AccountId == account.Id && e.Direction == EntryDirection.Credit)
+            .SumAsync(e => (long?)e.AmountMinor, ct) ?? 0;
+
+        return account.Type is LedgerAccountType.Asset or LedgerAccountType.Expense
+            ? debits - credits
+            : credits - debits;
+    }
+
+    public async Task<long> AvailableFundsMinorAsync(
+        string currency,
+        CancellationToken ct = default
+    )
+    {
+        var cash = await BalanceMinorAsync("CASH", currency, ct);
+        var payable = await BalanceMinorAsync("PAYABLE", currency, ct);
+
+        return cash - payable;
+    }
 }

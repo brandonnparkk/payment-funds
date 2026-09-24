@@ -6,6 +6,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using NUnit.Framework;
 using PaymentFunds.Data;
+using PaymentFunds.Ledger;
 using PaymentFunds.Models;
 using Stripe;
 
@@ -71,7 +72,54 @@ public class StripeWebhookTests : IntegrationTestBase
         using var scope = Factory.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
         var saved = await db.PaymentRequests.SingleAsync();
-        Assert.That(saved.Status, Is.EqualTo(PaymentStatus.Completed));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(saved.Status, Is.EqualTo(PaymentStatus.Completed));
+            Assert.That(saved.SettledAt, Is.Not.Null);
+        });
+    }
+
+    [Test]
+    public async Task Settling_a_collection_posts_cash_and_revenue()
+    {
+        var requestId = await SeedProcessingRequestAsync("pi_collection_1", RequestType.Collection);
+        var payload = SucceededEvent("evt_collection_1", "pi_collection_1");
+
+        await PostAsync(payload, Sign(payload, PaymentFundsFactory.WebhookSecret));
+
+        var entries = await EntriesForRequestAsync(requestId);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(entries, Has.Count.EqualTo(2));
+            Assert.That(DirectionFor(entries, "CASH"), Is.EqualTo(EntryDirection.Debit));
+            Assert.That(DirectionFor(entries, "REVENUE"), Is.EqualTo(EntryDirection.Credit));
+            Assert.That(entries.All(e => e.AmountMinor == 1999), Is.True);
+            Assert.That(entries.Select(e => e.TransactionId).Distinct().Count(), Is.EqualTo(1));
+        });
+    }
+
+    [Test]
+    public async Task Settling_a_disbursement_discharges_the_payable()
+    {
+        var requestId = await SeedProcessingRequestAsync("pi_disb_1", RequestType.Disbursement);
+        await SeedApprovalPostingAsync(requestId, 19.99m);
+
+        var payload = SucceededEvent("evt_disb_1", "pi_disb_1");
+        await PostAsync(payload, Sign(payload, PaymentFundsFactory.WebhookSecret));
+
+        var entries = await EntriesForRequestAsync(requestId);
+
+        await Assert.MultipleAsync(async () =>
+        {
+            Assert.That(entries, Has.Count.EqualTo(4),
+                "Two from the approval, two from the settlement.");
+            Assert.That(await BalanceAsync("PAYABLE"), Is.EqualTo(0),
+                "The obligation is discharged.");
+            Assert.That(await BalanceAsync("CASH"), Is.EqualTo(-1999),
+                "Cash leaves the platform. Negative here only because nothing funded it.");
+        });
     }
 
     [Test]
@@ -95,20 +143,73 @@ public class StripeWebhookTests : IntegrationTestBase
         Assert.That(await db.ProcessedStripeEvents.CountAsync(), Is.EqualTo(1));
     }
 
-    private async Task SeedProcessingRequestAsync(string intentId)
+    // ---- helpers ----
+
+    private async Task<int> SeedProcessingRequestAsync(
+        string intentId, RequestType type = RequestType.Collection)
     {
         using var scope = Factory.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
-        db.PaymentRequests.Add(new PaymentRequest
+
+        var request = new PaymentRequest
         {
             IdempotencyKey = Guid.NewGuid().ToString(),
             Amount = 19.99m,
             Currency = "usd",
+            Type = type,
             Status = PaymentStatus.Processing,
             RequestedBy = "test",
             ProviderReference = intentId
-        });
+        };
+
+        db.PaymentRequests.Add(request);
+        await db.SaveChangesAsync();
+        return request.Id;
+    }
+
+    /// <summary>
+    /// Recreates the posting that approval would have made, so a disbursement arrives
+    /// at settlement with a payable to discharge rather than out of nowhere.
+    /// </summary>
+    private async Task SeedApprovalPostingAsync(int requestId, decimal amount)
+    {
+        using var scope = Factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+        var ledger = scope.ServiceProvider.GetRequiredService<ILedgerService>();
+
+        var minor = ILedgerService.ToMinorUnits(amount);
+
+        await ledger.AddPostingAsync(new LedgerPosting(
+            "usd",
+            $"Approved disbursement #{requestId}",
+            requestId,
+            [
+                new LedgerLine("EXPENSE", EntryDirection.Debit, minor),
+                new LedgerLine("PAYABLE", EntryDirection.Credit, minor)
+            ]));
+
         await db.SaveChangesAsync();
     }
 
+    private async Task<List<LedgerEntry>> EntriesForRequestAsync(int requestId)
+    {
+        using var scope = Factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+
+        return await db.LedgerEntries
+            .Include(e => e.Account)
+            .Where(e => e.PaymentRequestId == requestId)
+            .OrderBy(e => e.Id)
+            .ToListAsync();
+    }
+
+    private async Task<long> BalanceAsync(string code, string currency = "usd")
+    {
+        using var scope = Factory.Services.CreateScope();
+        var ledger = scope.ServiceProvider.GetRequiredService<ILedgerService>();
+        return await ledger.BalanceMinorAsync(code, currency);
+    }
+
+    private static EntryDirection DirectionFor(List<LedgerEntry> entries, string accountCode) =>
+        entries.Single(e => e.Account.Code == accountCode).Direction;
 }
