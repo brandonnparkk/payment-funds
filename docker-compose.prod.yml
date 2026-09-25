@@ -1,0 +1,69 @@
+# Production stack for the VPS. Differs from docker-compose.yml in three ways:
+#   - pulls the published image instead of building from source
+#   - publishes no application or database ports to the host, only Caddy's
+#   - restarts on reboot
+#
+#   docker compose -f docker-compose.prod.yml pull
+#   docker compose -f docker-compose.prod.yml up -d
+#
+# Reads the same .env as the development stack. See .env.example.
+
+services:
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # Certificates live here. Losing this volume means re-issuing on every
+      # restart, which will hit Let's Encrypt rate limits.
+      - caddy_data:/data
+      - caddy_config:/config
+      - caddy_logs:/var/log/caddy
+    depends_on:
+      - app
+
+  app:
+    image: ghcr.io/brandonnparkk/payment-funds:latest
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      # Single instance, so there is no migration race to avoid.
+      RunMigrationsAtStartup: "true"
+      # Production does not seed by default; the demo accounts are the point
+      # of this deployment, so turn it on explicitly.
+      SeedIdentity: "true"
+      ConnectionStrings__DefaultConnection: "Host=postgres;Port=5432;Database=PaymentFunds;Username=paymentfunds;Password=${POSTGRES_PASSWORD:?see .env.example}"
+      SeedUsers__RequesterPassword: ${SEED_REQUESTER_PASSWORD:?see .env.example}
+      SeedUsers__ApproverPassword: ${SEED_APPROVER_PASSWORD:?see .env.example}
+      Stripe__SecretKey: ${STRIPE_SECRET_KEY:?required in production}
+      Stripe__WebhookSecret: ${STRIPE_WEBHOOK_SECRET:?required in production}
+    # Reachable from Caddy on the compose network, not from the host.
+    expose:
+      - "8080"
+
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: PaymentFunds
+      POSTGRES_USER: paymentfunds
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?see .env.example}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U paymentfunds -d PaymentFunds"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  pgdata:
+  caddy_data:
+  caddy_config:
+  caddy_logs:

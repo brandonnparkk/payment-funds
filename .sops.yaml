@@ -1,0 +1,12 @@
+# At the repository root so sops finds it regardless of where you run from.
+# It searches upward from the current directory, so a config nested in k8s/
+# only works when you happen to be inside k8s/.
+creation_rules:
+  # Anchored and with the dot escaped, unlike `.*.yaml`, which matches any
+  # character before "yaml" and every yaml file in the repo. Only files under
+  # k8s/secrets/ are encryption targets.
+  #
+  # Templates end in .yaml.example, so they do not match and stay readable.
+  - path_regex: k8s/secrets/.*\.ya?ml$
+    encrypted_regex: ^(data|stringData)$
+    age: age1zd5n9zx0dsdwdggjuvz32ppngn45gk0tcnwlwfs53ev7szefmdfqarudsl

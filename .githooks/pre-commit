@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+#
+# Refuses to commit a file under k8s/secrets/ that is not sops-encrypted.
+#
+# Enable once per clone:
+#   git config core.hooksPath .githooks
+#
+# Hooks are not shared through git, so a fresh clone has to run that again.
+# This is a seatbelt, not a control: --no-verify bypasses it.
+
+set -euo pipefail
+
+staged=$(git diff --cached --name-only --diff-filter=ACM | grep -E '^k8s/secrets/.*\.ya?ml$' || true)
+
+failed=0
+for file in $staged; do
+    case "$file" in
+        *.example|*.example.yaml|*.example.yml) continue ;;
+    esac
+
+    # Read the staged content, not the working tree, so `git add` of a
+    # plaintext file followed by encrypting on disk still gets caught.
+    if ! git show ":$file" | grep -q 'ENC\['; then
+        echo "BLOCKED: $file is staged unencrypted." >&2
+        echo "         Run: sops -e -i $file && git add $file" >&2
+        failed=1
+    fi
+done
+
+if [ "$failed" -ne 0 ]; then
+    echo >&2
+    echo "No secrets were committed." >&2
+    exit 1
+fi

@@ -1,0 +1,27 @@
+# Caddy reverse proxy for the production deployment.
+#
+# Caddy obtains and renews a Let's Encrypt certificate on its own, so there is
+# no certbot and no cron job. It needs ports 80 and 443 reachable from the
+# internet: port 80 is how the ACME challenge is answered, not just a redirect.
+
+{
+	# Let's Encrypt emails expiry warnings here if renewal ever breaks.
+	# Replace, or delete these two lines to stay anonymous.
+	email brandonpark206@gmail.com
+}
+
+payments.bpark.dev {
+	encode zstd gzip
+
+	# "app" is the compose service name, resolved on the internal network.
+	# The app container publishes no host ports, so this proxy is the only
+	# way in.
+	reverse_proxy app:8080
+
+	log {
+		output file /var/log/caddy/access.log {
+			roll_size 10MB
+			roll_keep 5
+		}
+	}
+}
