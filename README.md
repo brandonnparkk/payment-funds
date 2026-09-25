@@ -459,7 +459,7 @@ traffic, don't kill it.
 
 The image is built by [`.github/workflows/publish.yml`](.github/workflows/publish.yml)
 on every push to `main`, after the test suite passes, and pushed to GitHub Container
-Registry as `linux/arm64`.
+Registry as `linux/amd64`.
 
 ```bash
 docker pull ghcr.io/brandonnparkk/payment-funds:latest
