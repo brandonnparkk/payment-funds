@@ -1,0 +1,121 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: app-deployment
+  labels:
+    app: paymentfunds
+spec:
+  replicas: 1
+  # Recreate, not RollingUpdate. A rolling update briefly runs two pods, and
+  # both would run LedgerSeeder against the same unique (Code, Currency) index
+  # and both would poll for approved requests. Single replica costs a few
+  # seconds of downtime per deploy and avoids all of it.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: paymentfunds
+  template:
+    metadata:
+      labels:
+        app: paymentfunds
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        # Matches APP_UID in the .NET runtime image.
+        runAsUser: 1654
+        fsGroup: 1654
+        seccompProfile:
+          type: RuntimeDefault
+
+      # Applies migrations and exits. The app container does not start until
+      # this exits 0, so the schema is always current before anything serves.
+      # A failed migration leaves the pod in Init:Error, which is a far clearer
+      # signal than an app crash loop.
+      initContainers:
+        - name: migrate
+          image: ghcr.io/brandonnparkk/payment-funds:latest
+          args: ["--migrate-only"]
+          envFrom:
+            - secretRef:
+                name: app-secret
+          env:
+            - name: ASPNETCORE_ENVIRONMENT
+              value: Production
+            # The seeders run here too, in the one place nothing races them.
+            - name: SeedIdentity
+              value: "true"
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 100m
+              memory: 192Mi
+            limits:
+              memory: 512Mi
+
+      containers:
+        - name: app
+          image: ghcr.io/brandonnparkk/payment-funds:latest
+          ports:
+            - name: http
+              containerPort: 8080
+          envFrom:
+            - secretRef:
+                name: app-secret
+          env:
+            - name: ASPNETCORE_ENVIRONMENT
+              value: Production
+            # The init container already migrated. Doing it again here would
+            # be harmless but slows every restart.
+            - name: RunMigrationsAtStartup
+              value: "false"
+            - name: SeedIdentity
+              value: "false"
+
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            # Not readOnlyRootFilesystem: ASP.NET Data Protection writes its
+            # key ring under the home directory. See the README for why that
+            # is a known limitation rather than a setting to flip.
+
+          # Covers a slow first boot without making liveness impatient. Until
+          # this succeeds, the other two probes do not run at all.
+          startupProbe:
+            httpGet:
+              path: /health/live
+              port: http
+            periodSeconds: 2
+            failureThreshold: 30
+
+          # Checks nothing but "is this process answering". Failing restarts
+          # the pod, so it must not depend on Postgres.
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: http
+            periodSeconds: 10
+            failureThreshold: 3
+
+          # Checks the database. Failing only removes the pod from the
+          # Service, which is the right answer to a dependency being down.
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: http
+            periodSeconds: 5
+            failureThreshold: 3
+
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              # No CPU limit on purpose. A limit throttles the runtime during
+              # GC and JIT for no benefit on a node this app has to itself;
+              # the request is what the scheduler uses.
+              memory: 768Mi

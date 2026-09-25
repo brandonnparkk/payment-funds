@@ -462,7 +462,7 @@ on every push to `main`, after the test suite passes, and pushed to GitHub Conta
 Registry as `linux/arm64`.
 
 ```bash
-docker pull ghcr.io/brandonnparkk/paymentfunds:latest
+docker pull ghcr.io/brandonnparkk/payment-funds:latest
 ```
 
 Tagged with the full commit SHA as well as `latest`. Deployments pin the SHA, because
