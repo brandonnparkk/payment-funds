@@ -8,7 +8,36 @@ Built to work through the patterns real payment systems depend on: explicit stat
 
 ---
 
+## Live demo
+
+**<https://payments.bpark.dev>**
+
+| Role | Email | Password |
+|---|---|---|
+| Requester | `requester@paymentfunds.local` | `DemoRequest1` |
+| Approver | `approver@paymentfunds.local` | `DemoApprove1` |
+
+Requests and approvals are separate roles on purpose, so seeing the full lifecycle
+means using both accounts:
+
+1. Sign in as the **approver** and add opening funds on the Ledger page.
+2. Sign in as the **requester** and create a request.
+3. Sign in as the **approver** and approve it.
+4. Refresh after a few seconds. The background worker calls Stripe, Stripe calls
+   back over a webhook, and the request settles to `Completed`.
+
+Approving your own request is refused. That is [separation of duties](#authentication-and-roles),
+not a bug.
+
+Running on a VPS as three containers behind Caddy, which terminates TLS. Stripe's
+webhooks reach it at the same hostname, so settlement here is the real thing rather
+than a local tunnel.
+
+---
+
 ## Table of contents
+
+- [Live demo](#live-demo)
 
 - [How it works](#how-it-works)
 - [Tech stack](#tech-stack)
@@ -54,8 +83,9 @@ The web request never waits on Stripe. Approval returns immediately and the paym
 | Async processing | `BackgroundService` polling the database |
 | Auth | ASP.NET Core Identity, cookie-based, role authorization |
 | Testing | NUnit 4 with `WebApplicationFactory` integration tests |
-| Orchestration | Kubernetes (minikube locally) |
-| Secrets (dev) | .NET User Secrets, sops for Kubernetes manifests |
+| CI/CD | GitHub Actions, image published to GHCR |
+| Deployment | Docker Compose behind Caddy on a VPS |
+| Secrets | .NET User Secrets in development, `.env` in deployment |
 
 ---
 
@@ -265,7 +295,7 @@ There are two ways to run this. Pick based on what you want to do.
 | | [Docker Compose](#run-it-with-docker-compose) | [Local development](#run-it-for-development) |
 |---|---|---|
 | Time to first page | About two minutes | About fifteen |
-| Needs | Docker | .NET 10 SDK, minikube, Stripe CLI |
+| Needs | Docker | .NET 10 SDK, Docker, Stripe CLI |
 | Good for | Seeing the app, reviewing it | Changing code, webhook work |
 | Webhook settlement | No, requests stay in `Processing` | Yes |
 
@@ -309,7 +339,7 @@ and seeds the roles, demo users, and chart of accounts. All three are idempotent
 restarting is safe.
 
 Postgres is published on host port **5433**, not 5432, so it does not collide with a
-`kubectl port-forward` from the development path.
+PostgreSQL you may already have installed locally.
 
 ---
 
@@ -318,31 +348,33 @@ Postgres is published on host port **5433**, not 5432, so it does not collide wi
 #### Prerequisites
 
 - [.NET 10 SDK](https://dotnet.microsoft.com/download)
-- [minikube](https://minikube.sigs.k8s.io/docs/start) and `kubectl`
+- Docker
 - [Stripe CLI](https://docs.stripe.com/cli)
 - A Stripe account (test mode)
-- Nothing else listening on port 5432
+- Nothing else listening on port 5433
 
 All `dotnet` commands are run from the repository root and target the app with
 `--project src/PaymentFunds`.
 
-You will want four terminals: one for the port-forward, one for `stripe listen`,
-one for the app, and one to work in.
+You will want three terminals: one for `stripe listen`, one for the app, and one to
+work in.
 
-#### 1. Start PostgreSQL in the cluster
+#### 1. Start PostgreSQL
 
-```bash
-minikube start
-kubectl apply -f k8s/
-kubectl get pods -w        # wait for 1/1 Running
-```
-
-Forward the database port so the app can reach it from your host. Leave this running
-in its own terminal; it does not survive a cluster restart.
+Run only the database from the compose stack and leave the app to `dotnet run`, so
+you get hot reload and a debugger:
 
 ```bash
-kubectl port-forward svc/postgres 5432:5432
+cp .env.example .env        # if you have not already
+docker compose up -d postgres
 ```
+
+It listens on host port **5433**, chosen so it never collides with a local
+PostgreSQL install.
+
+`k8s/` contains manifests for running the database (and the app) on Kubernetes
+instead. They are maintained but not required; see
+[Why not Kubernetes](#why-not-kubernetes).
 
 #### 2. Configure secrets
 
@@ -358,15 +390,19 @@ user creation.
 
 Copy `src/PaymentFunds/appsettings.Development.example.json` to
 `appsettings.Development.json` and fill in the connection string. That file is
-gitignored, and its credentials must match `k8s/postgres-secret.yaml`, which is
-encrypted with sops.
+gitignored. Its username and password must match what you put in `.env`, since
+that is what the database container was created with:
+
+```
+Host=localhost;Port=5433;Database=PaymentFunds;Username=paymentfunds;Password=<POSTGRES_PASSWORD from .env>
+```
 
 The test project reads its own connection string, also from user secrets, with no
 hardcoded fallback:
 
 ```bash
 dotnet user-secrets set "ConnectionStrings:TestDatabase" \
-  "Host=localhost;Port=5432;Database=paymentfunds_test;Username=<user>;Password=<password>" \
+  "Host=localhost;Port=5433;Database=paymentfunds_test;Username=paymentfunds;Password=<POSTGRES_PASSWORD from .env>" \
   --project tests/PaymentFunds.Tests
 ```
 
@@ -376,14 +412,14 @@ dotnet user-secrets set "ConnectionStrings:TestDatabase" \
 ASPNETCORE_ENVIRONMENT=Development dotnet ef database update --project src/PaymentFunds
 ```
 
-The PersistentVolumeClaim survives `minikube stop`, so on a normal restart the schema
-is already there and this is a no-op. After a `minikube delete` the volume is gone and
-this recreates everything.
+The `pgdata` volume survives `docker compose down`, so on a normal restart the schema
+is already there and this is a no-op. After `docker compose down -v` the volume is
+gone and this recreates everything.
 
 Check what you have with:
 
 ```bash
-psql -h localhost -p 5432 -U <user> -d PaymentFunds -c '\dt'
+docker compose exec postgres psql -U paymentfunds -d PaymentFunds -c '\dt'
 ```
 
 #### 4. Start the webhook listener
@@ -475,8 +511,48 @@ docker build -t paymentfunds:local .
 ```
 
 Running the image with `--migrate-only` applies migrations and exits, which is how the
-Kubernetes migration Job works. Compose instead sets `RunMigrationsAtStartup=true`,
-because with one replica there is no migration race to worry about.
+Kubernetes init container works. Compose instead sets `RunMigrationsAtStartup=true`,
+because with one instance there is no migration race to worry about.
+
+### How the live demo is deployed
+
+A small VPS running three containers from
+[`docker-compose.prod.yml`](docker-compose.prod.yml):
+
+```
+Internet ──► payments.bpark.dev ──► caddy ──► app ──► postgres
+                                    :80/:443   :8080    :5432
+```
+
+Only Caddy publishes ports to the host. The app and database are reachable solely
+across the internal compose network, so neither is exposed to the internet even by
+accident.
+
+Caddy obtains and renews its Let's Encrypt certificate itself, which is why there is
+no certbot and no renewal cron job. It forwards `X-Forwarded-Proto`, and
+`UseForwardedHeaders` in `Program.cs` applies it before anything reads the scheme —
+without that the app would treat every request as plain HTTP, emit `http://` redirects
+after login, and never set the `Secure` flag on its auth cookie.
+
+Deploying a new version:
+
+```bash
+git pull
+docker compose -f docker-compose.prod.yml pull
+docker compose -f docker-compose.prod.yml up -d
+```
+
+### Why not Kubernetes
+
+`k8s/` holds a complete set of manifests — Deployment with a migration init container,
+Service, probes, sops-encrypted Secrets — targeting a k3s cluster. They are not what
+runs the live demo.
+
+For a single-instance app, Compose does the same job with far fewer moving parts, and
+the parts Kubernetes would add (rolling updates, autoscaling, self-healing across
+nodes) have nothing to do with what this project demonstrates. The manifests stay in
+the repo because the deployment target may change; the hosting choice should follow
+the requirement rather than the other way round.
 
 ---
 
@@ -486,10 +562,11 @@ The integration tests hit a real PostgreSQL database rather than the EF InMemory
 provider, because the behaviour under test is database behaviour. InMemory does not
 enforce unique indexes, so the idempotency tests would pass against a broken app.
 
-One-time setup, with the port-forward running:
+One-time setup, with the database container running:
 
 ```bash
-psql -h localhost -p 5432 -U <user> -d PaymentFunds -c 'CREATE DATABASE paymentfunds_test'
+docker compose exec postgres \
+  psql -U paymentfunds -d PaymentFunds -c 'CREATE DATABASE paymentfunds_test'
 ```
 
 Plus the `ConnectionStrings:TestDatabase` user secret from step 2 of Getting started.
@@ -547,7 +624,7 @@ client follows redirects by default, so a refused action that returns 302 lands 
 200 and would sail past a `StatusCode < 400` assertion. Status codes are only asserted
 where the code itself is the point, as with 401, 403, and 400.
 
-> The port-forward must be running or every integration test fails on connection.
+> `docker compose up -d postgres` must be running or every integration test fails on connection.
 
 ---
 
@@ -609,7 +686,8 @@ tests/PaymentFunds.Tests/
   LedgerTests.cs                   Balance invariant, postings, funds guard, reversal
   PaymentProcessorTests.cs         Fake processor unit tests
 
-k8s/                               PostgreSQL manifests (sops-encrypted secret)
+k8s/                               Kubernetes manifests (alternative target, not used in production)
+scripts/                           Operational scripts
 ```
 
 ---
@@ -717,7 +795,10 @@ Documented deliberately rather than hidden.
 - **Coverage is uneven.** The webhook boundary, the authorization rules, payee verification, form idempotency, and the ledger are covered. The worker's polling, claiming, payee re-check, and reversal are not, because the factory removes hosted services during tests. `LedgerTests` reproduces the worker's reversal rather than invoking it, so a change to the worker alone would not fail a test.
 - **`StripeConfiguration.ApiKey` is a global static.** `StripePaymentProcessor` reads it implicitly rather than receiving injected configuration.
 - **No browser tests.** Coverage is HTTP-level through `WebApplicationFactory`. Playwright is planned.
-- **The app is not containerized.** Only PostgreSQL runs in Kubernetes. The app runs on the host and reaches the database through `kubectl port-forward`.
+- **The live demo is open to anyone.** The seeded credentials are published below, so the data drifts as people use it. Stripe test mode means no real money can move, but the demo is not a private sandbox.
+- **Single instance, no high availability.** One app container, one Postgres container, one VPS. A restart is a few seconds of downtime and a host failure is an outage.
+- **Data Protection keys are ephemeral.** ASP.NET encrypts auth cookies with a key ring held in the container filesystem, so redeploying signs everyone out. Persisting it needs a mounted volume or a shared key store.
+- **The Kubernetes manifests are not what runs in production.** `k8s/` targets a k3s cluster and is complete, but the live deployment is Docker Compose behind Caddy on a VPS.
 
 ---
 
@@ -736,7 +817,7 @@ Documented deliberately rather than hidden.
 | 8. Payees and disbursement modeling | Complete |
 | 8.5. Interface polish | Complete |
 | 9. Double-entry ledger | Complete |
-| 10. Containerization, observability, Kubernetes deployment | Planned |
+| 10. Containerization and public deployment | Complete |
 
 Deferred: approval policy engine (thresholds, dual approval) and worker resilience
 (retry, backoff, dead-letter, stuck-row sweeper).
