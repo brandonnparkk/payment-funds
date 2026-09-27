@@ -29,3 +29,29 @@ body {
 .form-floating > .form-control-plaintext:focus::placeholder, .form-floating > .form-control:focus::placeholder {
   text-align: start;
 }
+
+/*
+  Scrolling shadows for .table-responsive.
+
+  Tables keep every column on narrow screens and scroll sideways instead. A
+  scrollbar is hidden until you touch the element on iOS and Android, so
+  without a cue the table just looks cut off at the edge.
+
+  Two white gradients pinned to the left and right edges sit on top of two
+  grey ones. The white pair uses background-attachment: local, so it scrolls
+  away with the content; the grey pair uses scroll, so it stays put. At the
+  far left the white covers the grey and no shadow shows. Once you scroll,
+  the white slides off and the grey shadow appears, pointing back at the
+  content now out of view. No JavaScript, no scroll listeners.
+*/
+.table-responsive {
+  background-image:
+    linear-gradient(to right, #fff 30%, rgba(255, 255, 255, 0)),
+    linear-gradient(to right, rgba(255, 255, 255, 0), #fff 70%),
+    radial-gradient(farthest-side at 0 50%, rgba(0, 0, 0, 0.18), rgba(0, 0, 0, 0)),
+    radial-gradient(farthest-side at 100% 50%, rgba(0, 0, 0, 0.18), rgba(0, 0, 0, 0));
+  background-position: 0 0, 100% 0, 0 0, 100% 0;
+  background-repeat: no-repeat;
+  background-size: 40px 100%, 40px 100%, 14px 100%, 14px 100%;
+  background-attachment: local, local, scroll, scroll;
+}

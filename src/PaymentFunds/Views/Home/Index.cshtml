@@ -68,23 +68,29 @@
 else
 {
     <div class="card">
-        <table class="table table-hover mb-0 align-middle">
-            <tbody>
-            @foreach (var r in Model.Recent)
-            {
-                <tr>
-                    <td class="ps-3">
-                        <a asp-controller="PaymentRequests" asp-action="Details" asp-route-id="@r.Id">
-                            #@r.Id
-                        </a>
-                    </td>
-                    <td class="fw-semibold">@r.Amount.ToMoney(r.Currency)</td>
-                    <td class="text-muted">@(r.Payee?.DisplayName ?? r.RequestedBy)</td>
-                    <td><span class="badge @r.Status.BadgeClass()">@r.Status.Humanize()</span></td>
-                    <td class="text-muted small text-end pe-3">@r.CreatedAt.ToString("d MMM HH:mm")</td>
-                </tr>
-            }
-            </tbody>
-        </table>
+        <div class="table-responsive">
+            <table class="table table-hover mb-0 align-middle">
+                <tbody>
+                @foreach (var r in Model.Recent)
+                {
+                    <tr>
+                        <td class="ps-3">
+                            <a asp-controller="PaymentRequests" asp-action="Details" asp-route-id="@r.Id">
+                                #@r.Id
+                            </a>
+                        </td>
+                        <td class="fw-semibold text-nowrap">@r.Amount.ToMoney(r.Currency)</td>
+                        <td class="text-muted text-nowrap">@(r.Payee?.DisplayName ?? r.RequestedBy)</td>
+                        <td class="text-nowrap">
+                            <span class="badge @r.Status.BadgeClass()">@r.Status.Humanize()</span>
+                        </td>
+                        <td class="text-muted small text-end pe-3 text-nowrap">
+                            @r.CreatedAt.ToString("d MMM HH:mm")
+                        </td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        </div>
     </div>
 }

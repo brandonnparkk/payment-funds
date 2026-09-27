@@ -4,7 +4,7 @@
     var awaiting = Model.Count(p => p.Status == PayeeStatus.Unverified);
 }
 
-<div class="d-flex justify-content-between align-items-center mb-3">
+<div class="d-flex flex-wrap gap-2 justify-content-between align-items-center mb-3">
     <div>
         <h1 class="h3 mb-0">Payees</h1>
         @if (awaiting > 0)
@@ -28,75 +28,77 @@
 else
 {
     <div class="card">
-        <table class="table table-hover align-middle mb-0">
-            <thead class="table-light">
-                <tr>
-                    <th class="ps-3">Name</th>
-                    <th>Payout</th>
-                    <th>Tax form</th>
-                    <th>Status</th>
-                    <th>Verified by</th>
-                    <th class="text-end pe-3"></th>
-                </tr>
-            </thead>
-            <tbody>
-            @foreach (var p in Model)
-            {
-                <tr>
-                    <td class="ps-3">
-                        <div class="fw-semibold">@p.DisplayName</div>
-                        <div class="small text-muted">@p.Email</div>
-                    </td>
-                    <td class="font-monospace">@(p.PayoutDestinationMask ?? "—")</td>
-                    <td>
-                        @if (p.TaxFormOnFile)
-                        {
-                            <span class="text-success">On file</span>
-                        }
-                        else
-                        {
-                            <span class="text-warning">Missing</span>
-                        }
-                    </td>
-                    <td><span class="badge @p.Status.BadgeClass()">@p.Status.Humanize()</span></td>
-                    <td class="small text-muted">
-                        @if (p.VerifiedBy is not null)
-                        {
-                            @p.VerifiedBy
-                            <div>@p.VerifiedAt?.ToString("d MMM yyyy")</div>
-                        }
-                        else
-                        {
-                            <span>&mdash;</span>
-                        }
-                    </td>
-                    <td class="text-end pe-3">
-                        @if (p.Status == PayeeStatus.Unverified
-                             && User.IsInRole("Approver")
-                             && p.CreatedBy != User.Identity!.Name)
-                        {
-                            <form asp-action="Verify" asp-route-id="@p.Id" method="post" class="d-inline">
-                                <button type="submit" class="btn btn-sm btn-success"
-                                        @(p.TaxFormOnFile ? "" : "disabled")>
-                                    Verify
-                                </button>
-                            </form>
-                        }
-                        else if (p.Status == PayeeStatus.Unverified && User.IsInRole("Approver"))
-                        {
-                            <span class="small text-muted">You created this payee</span>
-                        }
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th class="ps-3">Name</th>
+                        <th>Payout</th>
+                        <th class="text-nowrap">Tax form</th>
+                        <th>Status</th>
+                        <th class="text-nowrap">Verified by</th>
+                        <th class="text-end pe-3"></th>
+                    </tr>
+                </thead>
+                <tbody>
+                @foreach (var p in Model)
+                {
+                    <tr>
+                        <td class="ps-3">
+                            <div class="fw-semibold">@p.DisplayName</div>
+                            <div class="small text-muted">@p.Email</div>
+                        </td>
+                        <td class="font-monospace text-nowrap">@(p.PayoutDestinationMask ?? "—")</td>
+                        <td class="text-nowrap">
+                            @if (p.TaxFormOnFile)
+                            {
+                                <span class="text-success">On file</span>
+                            }
+                            else
+                            {
+                                <span class="text-warning">Missing</span>
+                            }
+                        </td>
+                        <td class="text-nowrap"><span class="badge @p.Status.BadgeClass()">@p.Status.Humanize()</span></td>
+                        <td class="small text-muted text-nowrap">
+                            @if (p.VerifiedBy is not null)
+                            {
+                                @p.VerifiedBy
+                                <div>@p.VerifiedAt?.ToString("d MMM yyyy")</div>
+                            }
+                            else
+                            {
+                                <span>&mdash;</span>
+                            }
+                        </td>
+                        <td class="text-end pe-3 text-nowrap">
+                            @if (p.Status == PayeeStatus.Unverified
+                                 && User.IsInRole("Approver")
+                                 && p.CreatedBy != User.Identity!.Name)
+                            {
+                                <form asp-action="Verify" asp-route-id="@p.Id" method="post" class="d-inline">
+                                    <button type="submit" class="btn btn-sm btn-success"
+                                            @(p.TaxFormOnFile ? "" : "disabled")>
+                                        Verify
+                                    </button>
+                                </form>
+                            }
+                            else if (p.Status == PayeeStatus.Unverified && User.IsInRole("Approver"))
+                            {
+                                <span class="small text-muted">You created this payee</span>
+                            }
 
-                        @if (p.Status == PayeeStatus.Verified && User.IsInRole("Approver"))
-                        {
-                            <form asp-action="Suspend" asp-route-id="@p.Id" method="post" class="d-inline">
-                                <button type="submit" class="btn btn-sm btn-outline-danger">Suspend</button>
-                            </form>
-                        }
-                    </td>
-                </tr>
-            }
-            </tbody>
-        </table>
+                            @if (p.Status == PayeeStatus.Verified && User.IsInRole("Approver"))
+                            {
+                                <form asp-action="Suspend" asp-route-id="@p.Id" method="post" class="d-inline">
+                                    <button type="submit" class="btn btn-sm btn-outline-danger">Suspend</button>
+                                </form>
+                            }
+                        </td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        </div>
     </div>
 }
