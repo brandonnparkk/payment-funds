@@ -4,12 +4,12 @@
     var active = ViewData["StatusFilter"] as PaymentStatus?;
 }
 
-<div class="d-flex justify-content-between align-items-center mb-3">
+<div class="d-flex flex-wrap gap-2 justify-content-between align-items-center mb-3">
     <h1 class="h3 mb-0">Payment requests</h1>
     <a asp-action="Create" class="btn btn-primary">New request</a>
 </div>
 
-<div class="mb-3">
+<div class="d-flex flex-wrap gap-1 mb-3">
     <a asp-action="Index" class="btn btn-sm @(active is null ? "btn-dark" : "btn-outline-secondary")">
         All
     </a>
@@ -45,44 +45,48 @@
 else
 {
     <div class="card">
-        <table class="table table-hover align-middle mb-0">
-            <thead class="table-light">
-                <tr>
-                    <th class="ps-3">Request</th>
-                    <th>Type</th>
-                    <th>Payee</th>
-                    <th class="text-end">Amount</th>
-                    <th>Requested by</th>
-                    <th>Status</th>
-                    <th class="text-end pe-3">Created</th>
-                </tr>
-            </thead>
-            <tbody>
-            @foreach (var r in Model)
-            {
-                <tr>
-                    <td class="ps-3">
-                        <a asp-action="Details" asp-route-id="@r.Id" class="fw-semibold">#@r.Id</a>
-                    </td>
-                    <td class="text-muted">@r.Type.Humanize()</td>
-                    <td>
-                        @if (r.Payee is not null)
-                        {
-                            <div>@r.Payee.DisplayName</div>
-                            <div class="small text-muted font-monospace">@r.Payee.PayoutDestinationMask</div>
-                        }
-                        else
-                        {
-                            <span class="text-muted">&mdash;</span>
-                        }
-                    </td>
-                    <td class="text-end fw-semibold">@r.Amount.ToMoney(r.Currency)</td>
-                    <td class="text-muted small">@r.RequestedBy</td>
-                    <td><span class="badge @r.Status.BadgeClass()">@r.Status.Humanize()</span></td>
-                    <td class="text-end pe-3 text-muted small">@r.CreatedAt.ToString("d MMM HH:mm")</td>
-                </tr>
-            }
-            </tbody>
-        </table>
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th class="ps-3">Request</th>
+                        <th class="text-nowrap">Type</th>
+                        <th>Payee</th>
+                        <th class="text-end">Amount</th>
+                        <th class="text-nowrap">Requested by</th>
+                        <th>Status</th>
+                        <th class="text-end pe-3 text-nowrap">Created</th>
+                    </tr>
+                </thead>
+                <tbody>
+                @foreach (var r in Model)
+                {
+                    <tr>
+                        <td class="ps-3">
+                            <a asp-action="Details" asp-route-id="@r.Id" class="fw-semibold">#@r.Id</a>
+                        </td>
+                        <td class="text-muted text-nowrap">@r.Type.Humanize()</td>
+                        <td class="text-nowrap">
+                            @if (r.Payee is not null)
+                            {
+                                <div>@r.Payee.DisplayName</div>
+                                <div class="small text-muted font-monospace">@r.Payee.PayoutDestinationMask</div>
+                            }
+                            else
+                            {
+                                <span class="text-muted">&mdash;</span>
+                            }
+                        </td>
+                        <td class="text-end fw-semibold text-nowrap">@r.Amount.ToMoney(r.Currency)</td>
+                        <td class="text-muted small text-nowrap">@r.RequestedBy</td>
+                        <td class="text-nowrap"><span class="badge @r.Status.BadgeClass()">@r.Status.Humanize()</span></td>
+                        <td class="text-end pe-3 text-muted small text-nowrap">
+                            @r.CreatedAt.ToString("d MMM HH:mm")
+                        </td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        </div>
     </div>
 }
